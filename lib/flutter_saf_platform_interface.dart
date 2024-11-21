@@ -23,43 +23,7 @@ abstract class FlutterSafPlatform extends PlatformInterface {
     _instance = instance;
   }
 
-  Future<String?> getPlatformVersion() {
-    throw UnimplementedError('platformVersion() has not been implemented.');
-  }
-
   Future<List<String>?> pick() {
     throw UnimplementedError('pick() has not been implemented.');
-  }
-
-  Future<List<dynamic>?> open(String p) {
-    throw UnimplementedError('open() has not been implemented.');
-  }
-
-  Future<int?> validate(int d) {
-    throw UnimplementedError('validate() has not been implemented.');
-  }
-
-  Future<List<dynamic>?> create(String p, bool r) {
-    throw UnimplementedError('create() has not been implemented.');
-  }
-
-  Future<int?> delete(int d, bool r) {
-    throw UnimplementedError('delete() has not been implemented.');
-  }
-
-  Future<List<List<String>>?> list(int d) {
-    throw UnimplementedError('list() has not been implemented.');
-  }
-
-  Future<List<dynamic>?> rename(int d, String n) {
-    throw UnimplementedError('rename() has not been implemented.');
-  }
-
-  Future<int?> fsize(int d) {
-    throw UnimplementedError('fsize() has not been implemented.');
-  }
-
-  Future<void> test(int d, String n) {
-    throw UnimplementedError('test() has not been implemented.');
   }
 }

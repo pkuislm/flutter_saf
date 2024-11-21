@@ -18,7 +18,7 @@ static struct {
     jmethodID listDir;
     jmethodID createDir;
     jmethodID renameDir;
-    jmethodID checkDescriptor;
+    jmethodID deleteDescriptor;
     jmethodID deleteDir;
     jmethodID openFile;
     jmethodID getFileSize;
@@ -76,17 +76,23 @@ Java_org_pkuism_flutter_1saf_SAFPathWrapper_setupNativeProxy(JNIEnv* env, jobjec
 
     jclass cls = env->GetObjectClass(instance);
     s_instance._cls = (jclass)env->NewGlobalRef(cls);
-    s_instance.openDir = env->GetMethodID(cls, "onOpenPath", "(Ljava/lang/String;)Landroid/util/Pair;");
+s_instance.
+openDir = env->GetMethodID(cls, "onOpenPath", "(Ljava/lang/String;)I");
     s_instance.getParent = env->GetMethodID(cls, "getParent", "(I)I");
     s_instance.listDir = env->GetMethodID(cls, "listDirectory", "(I)Landroid/util/Pair;");
-    s_instance.createDir = env->GetMethodID(cls, "createDirectory", "(Ljava/lang/String;Z)Landroid/util/Pair;");
-    s_instance.checkDescriptor = env->GetMethodID(cls, "checkDocumentStat", "(I)I");
+s_instance.
+createDir = env->GetMethodID(cls, "createDirectory", "(Ljava/lang/String;Z)I");
+s_instance.
+deleteDescriptor = env->GetMethodID(cls, "deleteDocumentUri", "(I)V");
     s_instance.deleteDir = env->GetMethodID(cls, "deleteDir", "(IZ)I");
-    s_instance.renameDir = env->GetMethodID(cls, "renameDirectory", "(ILjava/lang/String;)Landroid/util/Pair;");
+s_instance.
+renameDir = env->GetMethodID(cls, "renameDirectory", "(ILjava/lang/String;)I");
     s_instance.openFile = env->GetMethodID(cls, "fopen", "(ILjava/lang/String;)I");
     s_instance.getFileSize = env->GetMethodID(cls, "getFileSize", "(I)I");
-    s_instance.createFile = env->GetMethodID(cls, "createDirectory", "(Ljava/lang/String;ZZ)Landroid/util/Pair;");
-    s_instance.renameFile = env->GetMethodID(cls, "renameFile", "(ILjava/lang/String;Z)Landroid/util/Pair;");
+s_instance.
+createFile = env->GetMethodID(cls, "createDirectory", "(Ljava/lang/String;ZZ)I");
+s_instance.
+renameFile = env->GetMethodID(cls, "renameFile", "(ILjava/lang/String;Z)I");
     s_instance.deleteFile = env->GetMethodID(cls, "deleteFile", "(I)I");
 
     jclass intClass = env->FindClass("java/lang/Integer");
@@ -115,19 +121,20 @@ Java_org_pkuism_flutter_1saf_SAFPathWrapper_destroyNativeProxy(JNIEnv* env, jobj
 }
 
 FFIEXPORT
-int32_t checkDescriptor(int32_t descriptor) {
+void deleteDescriptor(int32_t descriptor) {
+    if (descriptor <= 0) return;
     JNIEnv* env;
     s_instance._vm->AttachCurrentThread(&env, nullptr);
 
-    int32_t ret = env->CallIntMethod(s_instance._clsInst, s_instance.checkDescriptor, (jint)descriptor);
-    return ret;
+    env->CallVoidMethod(s_instance._clsInst, s_instance.deleteDescriptor, (jint)
+    descriptor);
 }
 
 struct DirContent {
-    int8_t** folders;
-    int32_t folder_count;
-    int8_t** files;
-    int32_t file_count;
+    int8_t *folders;
+    int32_t *folder_descriptors;
+    int8_t *files;
+    int32_t *file_descriptors;
 };
 FFIEXPORT
 DirContent* listDir(uint32_t descriptor) {
@@ -136,61 +143,50 @@ DirContent* listDir(uint32_t descriptor) {
 
     DirContent* dirInfo = nullptr;
     jobject pairRet = env->CallObjectMethod(s_instance._clsInst, s_instance.listDir, (jint)descriptor);
-    jobject ret = env->GetObjectField(pairRet, s_instance.pair_second);
+    jobject folders = env->GetObjectField(pairRet, s_instance.pair_first);
+
+    auto foldersStr = (jstring) env->GetObjectField(folders, s_instance.pair_first);
+    auto foldersHd = (jintArray) env->GetObjectField(folders, s_instance.pair_second);
+    auto fdaSize = env->GetArrayLength(foldersHd);
+    auto fda = env->GetIntArrayElements(foldersHd, nullptr);
+
+    jobject files = (jstring) env->GetObjectField(pairRet, s_instance.pair_second);
+    auto filesStr = (jstring) env->GetObjectField(files, s_instance.pair_first);
+    auto filesHd = (jintArray) env->GetObjectField(files, s_instance.pair_second);
+    auto fsaSize = env->GetArrayLength(filesHd);
+    auto fsa = env->GetIntArrayElements(filesHd, nullptr);
 
     dirInfo = (DirContent*)malloc(sizeof(DirContent));
-    jobject folders = env->CallObjectMethod(ret, s_instance.arraylist_get, 0);
-    jobject files = env->CallObjectMethod(ret, s_instance.arraylist_get, 1);
-
-    auto folderCount= env->CallIntMethod(folders, s_instance.arraylist_size);
-    if(folderCount > 0) {
-        dirInfo->folders = (int8_t**)malloc(folderCount * sizeof(int8_t*));
-        for(int i = 0; i < folderCount; i++) {
-            auto path = (jstring)env->CallObjectMethod(folders, s_instance.arraylist_get, i);
-            auto s = env->GetStringUTFChars(path, nullptr);
-            dirInfo->folders[i] = (int8_t*)strdup(s);
-            env->ReleaseStringUTFChars(path, s);
-        }
+    if (fdaSize > 0) {
+        dirInfo->folder_descriptors = (int32_t *) malloc(fdaSize * sizeof(int32_t));
+        memcpy(dirInfo->folder_descriptors, fda, fdaSize * sizeof(int32_t));
     }
-    dirInfo->folder_count = folderCount;
-
-    auto fileCount = env->CallIntMethod(files, s_instance.arraylist_size);
-    if(fileCount > 0) {
-        dirInfo->files = (int8_t**)malloc(fileCount * sizeof(int8_t*));
-        for(int i = 0; i < fileCount; i++) {
-            auto path = (jstring)env->CallObjectMethod(files, s_instance.arraylist_get, i);
-            auto s = env->GetStringUTFChars(path, nullptr);
-            dirInfo->files[i] = (int8_t*)strdup(s);
-            env->ReleaseStringUTFChars(path, s);
-        }
+    if (fsaSize > 0) {
+        dirInfo->file_descriptors = (int32_t *) malloc(fsaSize * sizeof(int32_t));
+        memcpy(dirInfo->file_descriptors, fsa, fsaSize * sizeof(int32_t));
     }
-    dirInfo->file_count = fileCount;
+
+    auto s1 = env->GetStringUTFChars(foldersStr, nullptr);
+    auto s2 = env->GetStringUTFChars(filesStr, nullptr);
+    dirInfo->folders = (int8_t *) strdup(s1);
+    dirInfo->files = (int8_t *) strdup(s2);
+
+    env->ReleaseIntArrayElements(foldersHd, fda, 0);
+    env->ReleaseIntArrayElements(filesHd, fsa, 0);
+    env->ReleaseStringUTFChars(foldersStr, s1);
+    env->ReleaseStringUTFChars(filesStr, s2);
+
     return dirInfo;
 }
 
-struct DirInfo {
-    int8_t* path;
-    int32_t descriptor;
-};
+
 FFIEXPORT
-DirInfo* openDir(int8_t* path) {
+int32_t openDir(int8_t *path) {
     JNIEnv* env;
     s_instance._vm->AttachCurrentThread(&env, nullptr);
 
-    DirInfo* dirInfo = nullptr;
     jstring open_path = env->NewStringUTF((char*)path);
-    jobject ret = env->CallObjectMethod(s_instance._clsInst, s_instance.openDir, open_path);
-    if(ret != nullptr) {
-        dirInfo = (DirInfo*)malloc(sizeof(DirInfo));
-        auto parsed_path = (jstring)env->GetObjectField(ret, s_instance.pair_first);
-        auto s = env->GetStringUTFChars(parsed_path, nullptr);
-
-        dirInfo->path = (int8_t*)strdup(s);
-        env->ReleaseStringUTFChars(parsed_path, s);
-        jobject c = env->GetObjectField(ret, s_instance.pair_second);
-        dirInfo->descriptor = env->CallIntMethod(c, s_instance.int_intValue);
-    }
-    return dirInfo;
+    return env->CallIntMethod(s_instance._clsInst, s_instance.openDir, open_path);
 }
 
 FFIEXPORT
@@ -202,41 +198,23 @@ int32_t getParent(int32_t descriptor) {
 }
 
 FFIEXPORT
-DirInfo* createDir(int8_t* path, bool recursive) {
+int32_t createDir(int8_t *path, bool recursive) {
     JNIEnv* env;
     s_instance._vm->AttachCurrentThread(&env, nullptr);
 
-    auto* dirInfo = (DirInfo*)malloc(sizeof(DirInfo));
     jstring create_path = env->NewStringUTF((char*)path);
 
-    jobject ret = env->CallObjectMethod(s_instance._clsInst, s_instance.createDir, create_path, recursive);
-    auto parsed_path = (jstring)env->GetObjectField(ret, s_instance.pair_first);
-    auto s = env->GetStringUTFChars(parsed_path, nullptr);
-
-    dirInfo->path = (int8_t*)strdup(s);
-    env->ReleaseStringUTFChars(parsed_path, s);
-    jobject c = env->GetObjectField(ret, s_instance.pair_second);
-    dirInfo->descriptor = env->CallIntMethod(c, s_instance.int_intValue);
-    return dirInfo;
+    return env->CallIntMethod(s_instance._clsInst, s_instance.createDir, create_path, recursive);
 }
 
 FFIEXPORT
-DirInfo* renameDir(int32_t descriptor, int8_t* newPath) {
+int32_t renameDir(int32_t descriptor, int8_t *newPath) {
     JNIEnv* env;
     s_instance._vm->AttachCurrentThread(&env, nullptr);
 
-    auto* dirInfo = (DirInfo*)malloc(sizeof(DirInfo));
     jstring n = env->NewStringUTF((char*)newPath);
 
-    jobject ret = env->CallObjectMethod(s_instance._clsInst, s_instance.renameDir, descriptor, n);
-    auto new_name = (jstring)env->GetObjectField(ret, s_instance.pair_first);
-    auto s = env->GetStringUTFChars(new_name, nullptr);
-
-    dirInfo->path = (int8_t*)strdup(s);
-    env->ReleaseStringUTFChars(new_name, s);
-    jobject c = env->GetObjectField(ret, s_instance.pair_second);
-    dirInfo->descriptor = env->CallIntMethod(c, s_instance.int_intValue);
-    return dirInfo;
+    return env->CallIntMethod(s_instance._clsInst, s_instance.renameDir, descriptor, n);
 }
 
 FFIEXPORT
@@ -249,41 +227,24 @@ int32_t deleteDir(int32_t descriptor, bool recursive) {
 }
 
 FFIEXPORT
-DirInfo* createFile(int8_t* path, bool recursive) {
+int32_t createFile(int8_t *path, bool recursive) {
     JNIEnv* env;
     s_instance._vm->AttachCurrentThread(&env, nullptr);
 
-    auto* dirInfo = (DirInfo*)malloc(sizeof(DirInfo));
     jstring create_path = env->NewStringUTF((char*)path);
 
-    jobject ret = env->CallObjectMethod(s_instance._clsInst, s_instance.createFile, create_path, recursive, true);
-    auto parsed_path = (jstring)env->GetObjectField(ret, s_instance.pair_first);
-    auto s = env->GetStringUTFChars(parsed_path, nullptr);
-
-    dirInfo->path = (int8_t*)strdup(s);
-    env->ReleaseStringUTFChars(parsed_path, s);
-    jobject c = env->GetObjectField(ret, s_instance.pair_second);
-    dirInfo->descriptor = env->CallIntMethod(c, s_instance.int_intValue);
-    return dirInfo;
+    return env->CallIntMethod(s_instance._clsInst, s_instance.createFile, create_path, recursive,
+                              true);
 }
 
 FFIEXPORT
-DirInfo* renameFile(int32_t descriptor, int8_t* newPath, bool copy) {
+int32_t renameFile(int32_t descriptor, int8_t *newPath, bool copy) {
     JNIEnv* env;
     s_instance._vm->AttachCurrentThread(&env, nullptr);
 
-    auto* dirInfo = (DirInfo*)malloc(sizeof(DirInfo));
     jstring n = env->NewStringUTF((char*)newPath);
 
-    jobject ret = env->CallObjectMethod(s_instance._clsInst, s_instance.renameFile, descriptor, n, copy);
-    auto new_name = (jstring)env->GetObjectField(ret, s_instance.pair_first);
-    auto s = env->GetStringUTFChars(new_name, nullptr);
-
-    dirInfo->path = (int8_t*)strdup(s);
-    env->ReleaseStringUTFChars(new_name, s);
-    jobject c = env->GetObjectField(ret, s_instance.pair_second);
-    dirInfo->descriptor = env->CallIntMethod(c, s_instance.int_intValue);
-    return dirInfo;
+    return env->CallIntMethod(s_instance._clsInst, s_instance.renameFile, descriptor, n, copy);
 }
 
 FFIEXPORT

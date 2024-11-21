@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:developer';
 import 'dart:ffi';
 import 'dart:io';
 import 'dart:isolate';
@@ -9,38 +10,33 @@ import 'package:flutter/services.dart';
 
 
 final class _DirContent extends Struct {
-  external Pointer<Pointer<f.Utf8>> folders;
-  @Int32()
-  external int folderCount;
-  external Pointer<Pointer<f.Utf8>> files;
-  @Int32()
-  external int fileCount;
-}
-
-final class _DirInfo extends Struct {
-  external Pointer<f.Utf8> path;
-  @Int32()
-  external int descriptor;
+  external Pointer<f.Utf8> folders;
+  external Pointer<Int32> folderDescriptors;
+  external Pointer<f.Utf8> files;
+  external Pointer<Int32> fileDescriptors;
 }
 
 final class _FileContent extends Struct {
   external Pointer<Uint8> data;
   @Int32()
-  external int  size;
+  external int size;
 }
 
 class _AndroidNativePathFuncProxy {
+  static _AndroidNativePathFuncProxy instance = _AndroidNativePathFuncProxy._();
+
   //throws uninitialized exception on non-android platform when trying to call these
-  late final int Function(int descriptor) checkDescriptor;
-  late final Pointer<_DirContent>? Function(int descriptor) _listDir;
-  late final Pointer<_DirInfo>? Function(Pointer<f.Utf8> path) _openDir;
+  late final void Function(int descriptor) deleteDescriptor;
+  late final Pointer<_DirContent> Function(int descriptor) _listDir;
+  late final int Function(Pointer<f.Utf8> path) _openDir;
   late final int Function(int descriptor) getParent;
-  late final Pointer<_DirInfo>? Function(Pointer<f.Utf8> path, bool recursive) _createDir;
-  late final Pointer<_DirInfo>? Function(int descriptor, Pointer<f.Utf8> path) _renameDir;
+  late final int Function(Pointer<f.Utf8> path, bool recursive) _createDir;
+  late final int Function(int descriptor, Pointer<f.Utf8> path) _renameDir;
   late final int Function(int descriptor, bool recursive) deleteDir;
   late final int Function(int descriptor) getFileSize;
-  late final Pointer<_DirInfo>? Function(Pointer<f.Utf8> path, bool recursive) _createFile;
-  late final Pointer<_DirInfo>? Function(int descriptor, Pointer<f.Utf8> path, bool copy) _renameFile;
+  late final int Function(Pointer<f.Utf8> path, bool recursive) _createFile;
+  late final int Function(int descriptor, Pointer<f.Utf8> path, bool copy)
+      _renameFile;
   late final int Function(int descriptor) deleteFile;
   late final Pointer<_FileContent> Function(int d) _fileReadAllBytes;
   late final int Function(int d, Pointer<Uint8> p, int s, int a) _fileWriteAllBytes;
@@ -60,7 +56,7 @@ class _AndroidNativePathFuncProxy {
   late final Pointer<NativeFinalizerFunction> nativeFree;
   late final void Function(Pointer<Void>) free;
 
-  _AndroidNativePathFuncProxy(){
+  _AndroidNativePathFuncProxy._() {
     if(Platform.isAndroid) {
       final DynamicLibrary nativeLib = DynamicLibrary.open('libflutter-saf.so');
 
@@ -68,16 +64,35 @@ class _AndroidNativePathFuncProxy {
       nativeFree = nativeLib.lookup<NativeFunction<Void Function(Pointer<Void>)>>('_free');
       free = nativeFree.asFunction();
 
-      _listDir = nativeLib.lookup<NativeFunction<Pointer<_DirContent>? Function(Int32)>>('listDir').asFunction();
-      _openDir = nativeLib.lookup<NativeFunction<Pointer<_DirInfo>? Function(Pointer<f.Utf8>)>>('openDir').asFunction();
+      _listDir = nativeLib
+          .lookup<NativeFunction<Pointer<_DirContent> Function(Int32)>>(
+              'listDir')
+          .asFunction();
+      _openDir = nativeLib
+          .lookup<NativeFunction<Int32 Function(Pointer<f.Utf8>)>>('openDir')
+          .asFunction();
       getParent = nativeLib.lookup<NativeFunction<Int32 Function(Int32)>>('getParent').asFunction();
-      _createDir = nativeLib.lookup<NativeFunction<Pointer<_DirInfo>? Function(Pointer<f.Utf8>, Bool)>>('createDir').asFunction();
-      _createFile = nativeLib.lookup<NativeFunction<Pointer<_DirInfo>? Function(Pointer<f.Utf8>, Bool)>>('createFile').asFunction();
-      checkDescriptor = nativeLib.lookup<NativeFunction<Int32 Function(Int32)>>('checkDescriptor').asFunction();
+      _createDir = nativeLib
+          .lookup<NativeFunction<Int32 Function(Pointer<f.Utf8>, Bool)>>(
+              'createDir')
+          .asFunction();
+      _createFile = nativeLib
+          .lookup<NativeFunction<Int32 Function(Pointer<f.Utf8>, Bool)>>(
+              'createFile')
+          .asFunction();
+      deleteDescriptor = nativeLib
+          .lookup<NativeFunction<Void Function(Int32)>>('deleteDescriptor')
+          .asFunction();
       deleteDir = nativeLib.lookup<NativeFunction<Int32 Function(Int32, Bool)>>('deleteDir').asFunction();
       getFileSize = nativeLib.lookup<NativeFunction<Int32 Function(Int32)>>('getFileSize').asFunction();
-      _renameDir = nativeLib.lookup<NativeFunction<Pointer<_DirInfo>? Function(Int32, Pointer<f.Utf8>)>>('renameDir').asFunction();
-      _renameFile = nativeLib.lookup<NativeFunction<Pointer<_DirInfo>? Function(Int32, Pointer<f.Utf8>, Bool)>>('renameFile').asFunction();
+      _renameDir = nativeLib
+          .lookup<NativeFunction<Int32 Function(Int32, Pointer<f.Utf8>)>>(
+              'renameDir')
+          .asFunction();
+      _renameFile = nativeLib
+          .lookup<NativeFunction<Int32 Function(Int32, Pointer<f.Utf8>, Bool)>>(
+              'renameFile')
+          .asFunction();
       deleteFile = nativeLib.lookup<NativeFunction<Int32 Function(Int32)>>('deleteFile').asFunction();
       _fileReadAllBytes = nativeLib.lookup<NativeFunction<Pointer<_FileContent> Function(Int32)>>('fileReadAllBytes').asFunction();
       _fileWriteAllBytes = nativeLib.lookup<NativeFunction<Int32 Function(Int32, Pointer<Uint8>, Int32, Int32)>>('fileWriteAllBytes').asFunction();
@@ -95,119 +110,58 @@ class _AndroidNativePathFuncProxy {
     }
   }
 
-  //Should always check descriptor before performing any operations that requires it
-  List<List<String>> listDir(int descriptor) {
-    var result = _listDir(descriptor);
-    var ret = <List<String>>[];
-    if(result != null) {
-      List<String> folders = [];
-      for(var i = 0; i < result.ref.folderCount; i++) {
-        var p = result.ref.folders + i;
-        folders.add(p.value.toDartString());
-        _allocator.free(p.value);
-      }
-      List<String> files = [];
-      for(var i = 0; i < result.ref.fileCount; i++) {
-        var p = result.ref.files + i;
-        files.add(p.value.toDartString());
-        _allocator.free(p.value);
-      }
-      ret.add(folders);
-      ret.add(files);
-      _allocator.free(result);
-    }
-    return ret;
-  }
-
-  List<dynamic> openDir(String path) {
+  int openDir(String path) {
     Pointer<f.Utf8> pathStr = path.toNativeUtf8();
     var result = _openDir(pathStr);
-    var ret = <dynamic>[];
-    if(result != null) {
-      ret.add(result.ref.path.toDartString());
-      _allocator.free(result.ref.path);
-      ret.add(result.ref.descriptor);
-      _allocator.free(result);
-    }
     f.malloc.free(pathStr);
-    return ret;
+    return result;
   }
 
-  List<dynamic>? createDir(String path, bool r) {
+  int createDir(String path, bool r) {
     Pointer<f.Utf8> pathStr = path.toNativeUtf8();
     var result = _createDir(pathStr, r);
-    List<dynamic>? ret;
-    if(result!.ref.descriptor != 0 && result.ref.descriptor != -1) {
-      ret = <dynamic>[];
-      ret.add(result.ref.path.toDartString());
-      ret.add(result.ref.descriptor);
-    }
-    _allocator.free(result.ref.path);
-    _allocator.free(result);
     f.malloc.free(pathStr);
-    return ret;
+    return result;
   }
 
-  List<dynamic>? createFile(String path, bool r) {
+  int createFile(String path, bool r) {
     Pointer<f.Utf8> pathStr = path.toNativeUtf8();
     var result = _createFile(pathStr, r);
-    List<dynamic>? ret;
-    if(result!.ref.descriptor != 0 && result.ref.descriptor != -1) {
-      ret = <dynamic>[];
-      ret.add(result.ref.path.toDartString());
-      ret.add(result.ref.descriptor);
-    }
-    _allocator.free(result.ref.path);
-    _allocator.free(result);
     f.malloc.free(pathStr);
-    return ret;
+    return result;
   }
 
-  List<dynamic>? renameDir(int descriptor, String newName) {
+  int renameDir(int descriptor, String newName) {
     Pointer<f.Utf8> pathStr = newName.toNativeUtf8();
     var result = _renameDir(descriptor, pathStr);
-    List<dynamic>? ret;
-    if(result!.ref.descriptor != 0 && result.ref.descriptor != -1) {
-      ret = <dynamic>[];
-      ret.add(result.ref.path.toDartString());
-      ret.add(result.ref.descriptor);
-    }
-    _allocator.free(result.ref.path);
-    _allocator.free(result);
     f.malloc.free(pathStr);
-    return ret;
+    return result;
   }
 
-  List<dynamic>? renameFile(int descriptor, String newName, bool copy) {
+  int renameFile(int descriptor, String newName, bool copy) {
     Pointer<f.Utf8> pathStr = newName.toNativeUtf8();
     var result = _renameFile(descriptor, pathStr, copy);
-    List<dynamic>? ret;
-    if(result!.ref.descriptor != 0 && result.ref.descriptor != -1) {
-      ret = <dynamic>[];
-      ret.add(result.ref.path.toDartString());
-      ret.add(result.ref.descriptor);
-    }
-    _allocator.free(result.ref.path);
-    _allocator.free(result);
     f.malloc.free(pathStr);
-    return ret;
+    return result;
   }
 
   int openFile(int descriptor, FileMode mode) {
-    var ret = _nativeProxy._openFile(descriptor, fileModeToInt(mode));
+    var ret = _AndroidNativePathFuncProxy.instance
+        ._openFile(descriptor, fileModeToInt(mode));
     return ret;
   }
-  
+
   Uint8List fileReadAllBytes(int descriptor) {
     var result = _fileReadAllBytes(descriptor);
     if(result.ref.size != -1) {
       var size = result.ref.size;
       var data = result.ref.data;
-      _allocator.free(result);
-      return data.asTypedList(size, finalizer: _allocator.nativeFree);
+      _AndroidNativeAllocator.instance.free(result);
+      return data.asTypedList(size,
+          finalizer: _AndroidNativeAllocator.instance.nativeFree);
     } else {
-      _allocator.free(result.ref.data);
-      _allocator.free(result);
+      _AndroidNativeAllocator.instance.free(result.ref.data);
+      _AndroidNativeAllocator.instance.free(result);
       return Uint8List(0);
     }
   }
@@ -222,34 +176,35 @@ class _AndroidNativePathFuncProxy {
       FileMode() => throw UnimplementedError(),
     };
   }
-  
+
   int fileWriteAllBytes(int descriptor, List<int> bytes, FileMode m) {
-    var p = _allocator.allocate<Uint8>(bytes.length);
+    var p = _AndroidNativeAllocator.instance.allocate<Uint8>(bytes.length);
     var arr = p.asTypedList(bytes.length);
     arr.setAll(0, bytes);
     var ret = _fileWriteAllBytes(descriptor, p, bytes.length, fileModeToInt(m));
-    _allocator.free(p);
+    _AndroidNativeAllocator.instance.free(p);
     return ret;
   }
 }
 
-final _nativeProxy = _AndroidNativePathFuncProxy();
-
 class _AndroidNativeAllocator implements Allocator {
+  _AndroidNativeAllocator._();
+
+  static _AndroidNativeAllocator instance = _AndroidNativeAllocator._();
+
   @override
   Pointer<T> allocate<T extends NativeType>(int byteCount, {int? alignment}) {
-    return _nativeProxy.malloc(byteCount).cast<T>();
+    return _AndroidNativePathFuncProxy.instance.malloc(byteCount).cast<T>();
   }
 
   @override
   void free(Pointer<NativeType> pointer) {
-    _nativeProxy.free(pointer.cast<Void>());
+    _AndroidNativePathFuncProxy.instance.free(pointer.cast<Void>());
   }
 
-  final Pointer<NativeFinalizerFunction> nativeFree = _nativeProxy.nativeFree;
+  final Pointer<NativeFinalizerFunction> nativeFree =
+      _AndroidNativePathFuncProxy.instance.nativeFree;
 }
-
-final _allocator = _AndroidNativeAllocator();
 
 void isolateWorker(SendPort sp) {
   final p = ReceivePort();
@@ -333,74 +288,35 @@ class _Document {
 
   _Document(this._myPath, this._descriptor);
 
-  ///Validation process must be performed in dart because
-  ///only dart holds the path string.
-  ///
-  ///Calling this function will let kotlin layer to cache the
-  ///DocumentFile object if it's a valid path.
-  ///
-  ///When the cache is full, the eldest DocumentFile will be erased,
-  ///causing the descriptor to be invalid, which needs to validate again.
-  Future<void> validateDescriptor() async {
-    if(_descriptor <= 0) {
-      return;
-    }
-    return FlutterSafPlatform.instance.validate(_descriptor).then((desc) {
-      if(desc == -2) {
-        //cache miss
-        _refreshDoc(_myPath).then((newDesc) {
-          if(newDesc == null) {
-            _descriptor = -1;
-            return;
-          }
-          _myPath = newDesc._myPath;
-          _descriptor = newDesc._descriptor;
-        });
-      }
-    });
-  }
-
-  void validateDescriptorSync() {
-    if(_descriptor <= 0) {
-      return;
-    }
-    var desc = _nativeProxy.checkDescriptor(_descriptor);
-
-    if(desc == -2) {
-      //cache miss
-      var newDesc = _refreshDocSync(_myPath)!;
-      _myPath = newDesc._myPath;
-      _descriptor = newDesc._descriptor;
-    }
-  }
-
   static Future<_Document?> _refreshDoc(String path){
-    return FlutterSafPlatform.instance.open(path).then((result) {
-      if(result == null || result.length != 2) {
+    return SAFTaskWorker().runTask<int>(
+        _AndroidNativePathFuncProxy.instance.openDir, [path]).then((result) {
+      if (result < 0) {
         return null;
       }
-      if(result[1] == -3) {
-        return null;
-      }
-      return _Document(result[0], result[1]);
+      return _Document(path, result);
     });
   }
 
   static _Document? _refreshDocSync(String path){
-    var result = _nativeProxy.openDir(path);
-    if(result.length != 2) {
+    var result = _AndroidNativePathFuncProxy.instance.openDir(path);
+    if (result < 0) {
       return null;
     }
-    if(result[1] == -3) {
-      return null;
-    }
-    return _Document(result[0], result[1]);
+    return _Document(path, result);
   }
 }
 
 class AndroidDirectory extends _Document implements Directory {
+  AndroidDirectory._(super._myPath, super._descriptor) {
+    _finalizer.attach(this, _descriptor, detach: this);
+  }
 
-  AndroidDirectory._(super._myPath, super._descriptor);
+  static final Finalizer<int> _finalizer = Finalizer<int>((value) {
+    if (value > 0) {
+      _AndroidNativePathFuncProxy.instance.deleteDescriptor(value);
+    }
+  });
 
   static Future<AndroidDirectory?> pickDirectory() async {
     return FlutterSafPlatform.instance.pick().then((result) {
@@ -439,12 +355,13 @@ class AndroidDirectory extends _Document implements Directory {
     if(_descriptor == 0) {
       throw FileSystemException("Cannot create directory specified.", _myPath);
     }
-    return FlutterSafPlatform.instance.create(_myPath, recursive).then((result) {
-      if(result == null) {
+    return SAFTaskWorker().runTask<int>(
+        _AndroidNativePathFuncProxy.instance.createDir,
+        [_myPath, recursive]).then((result) {
+      if (result < 0) {
         throw FileSystemException("Cannot create directory specified.", _myPath);
       }
-      _myPath = result[0];
-      _descriptor = result[1];
+      _descriptor = result;
       return this;
     });
   }
@@ -454,34 +371,38 @@ class AndroidDirectory extends _Document implements Directory {
     if(_descriptor == 0) {
       return;
     }
-    var result = _nativeProxy.createDir(_myPath, recursive);
-    if(result == null) {
+    var result =
+        _AndroidNativePathFuncProxy.instance.createDir(_myPath, recursive);
+    if (result < 0) {
       throw FileSystemException("Cannot create directory specified.", _myPath);
     }
-    _myPath = result[0];
-    _descriptor = result[1];
+    _descriptor = result;
   }
 
   @override
   Future<FileSystemEntity> delete({bool recursive = false}) async {
-    return validateDescriptor().then((_){
-      return FlutterSafPlatform.instance.delete(_descriptor, recursive).then((result) {
-        switch(result) {
-          case 0 : _descriptor = -1;
-          case -1: throw FileSystemException("Directory path is invalid", _myPath);
-          case -3: throw FileSystemException("Directory is not empty", _myPath);
-          //unbelievable
-          case -2: throw FileSystemException("Directory descriptor is invalid", _myPath);
-        }
-        return this;
-      });
+    return SAFTaskWorker().runTask(
+        _AndroidNativePathFuncProxy.instance.deleteDir,
+        [_descriptor, recursive]).then((result) {
+      switch (result) {
+        case 0:
+          _descriptor = -1;
+        case -1:
+          throw FileSystemException("Directory path is invalid", _myPath);
+        case -3:
+          throw FileSystemException("Directory is not empty", _myPath);
+        //unbelievable
+        case -2:
+          throw FileSystemException("Directory descriptor is invalid", _myPath);
+      }
+      return this;
     });
   }
 
   @override
   void deleteSync({bool recursive = false}) {
-    validateDescriptorSync();
-    var result = _nativeProxy.deleteDir(_descriptor, recursive);
+    var result =
+        _AndroidNativePathFuncProxy.instance.deleteDir(_descriptor, recursive);
     switch(result) {
       case 0 : _descriptor = -1;
       case -1: throw FileSystemException("Directory path is invalid", _myPath);
@@ -493,20 +414,11 @@ class AndroidDirectory extends _Document implements Directory {
 
   @override
   Future<bool> exists() async {
-    if(_descriptor < 0) {
-      return Future.value(false);
-    }
-    return validateDescriptor().then((v) {
-      return _descriptor >= 0;
-    });
+    return Future.value(_descriptor >= 0);
   }
 
   @override
   bool existsSync() {
-    if(_descriptor < 0) {
-      return false;
-    }
-    validateDescriptorSync();
     return _descriptor >= 0;
   }
 
@@ -518,22 +430,36 @@ class AndroidDirectory extends _Document implements Directory {
     if(_descriptor < 0) {
       return;
     }
-    validateDescriptorSync();
 
-    var dirContent = await SAFTaskWorker().runTask(_nativeProxy.listDir, [_descriptor]);
-    if(dirContent == null) {
-      return;
-    }
-    for(var d in dirContent[0]) {
-      var df = await fromPath("$_myPath/$d");
-      yield df!;
-      if(recursive) {
-        yield* df.list(recursive: recursive, followLinks: followLinks);
+    var dc = await SAFTaskWorker()
+        .runTask(_AndroidNativePathFuncProxy.instance._listDir, [_descriptor]);
+    final Pointer<_DirContent> dirContent = dc.cast<_DirContent>();
+    var f1 = dirContent.ref.folders.toDartString();
+    _AndroidNativeAllocator.instance.free(dirContent.ref.folders);
+    if (f1.isNotEmpty) {
+      var dirs = f1.split('|');
+      var f1h = dirContent.ref.folderDescriptors.asTypedList(dirs.length,
+          finalizer: _AndroidNativeAllocator.instance.nativeFree);
+      for (var i = 0; i < dirs.length; i++) {
+        var d = AndroidDirectory._("$_myPath/${dirs[i]}", f1h[i]);
+        yield d;
+        if (recursive) {
+          yield* d.list(recursive: recursive, followLinks: followLinks);
+        }
       }
     }
-    for(var d in dirContent[1]) {
-      yield (await AndroidFile.fromPath("$_myPath/$d"))!;
+
+    var f2 = dirContent.ref.files.toDartString();
+    _AndroidNativeAllocator.instance.free(dirContent.ref.files);
+    if (f2.isNotEmpty) {
+      var files = f2.split('|');
+      var f2h = dirContent.ref.fileDescriptors.asTypedList(files.length,
+          finalizer: _AndroidNativeAllocator.instance.nativeFree);
+      for (var i = 0; i < files.length; i++) {
+        yield AndroidFile._("$_myPath/${files[i]}", f2h[i]);
+      }
     }
+    _AndroidNativeAllocator.instance.free(dirContent);
   }
 
   @override
@@ -542,19 +468,35 @@ class AndroidDirectory extends _Document implements Directory {
     if(_descriptor < 0) {
       return result;
     }
-    validateDescriptorSync();
-    var dirContent = _nativeProxy.listDir(_descriptor);
-    for(var dir in dirContent[0]) {
-      var d = fromPathSync("$_myPath/$dir")!;
-      result.add(d);
-      if(recursive) {
-        result.addAll(d.listSync(recursive: recursive, followLinks: followLinks));
+
+    var contents = _AndroidNativePathFuncProxy.instance._listDir(_descriptor);
+    var f1 = contents.ref.folders.toDartString();
+    _AndroidNativeAllocator.instance.free(contents.ref.folders);
+    if (f1.isNotEmpty) {
+      var dirs = f1.split('|');
+      var f1h = contents.ref.folderDescriptors.asTypedList(dirs.length,
+          finalizer: _AndroidNativeAllocator.instance.nativeFree);
+      for (var i = 0; i < dirs.length; i++) {
+        var d = AndroidDirectory._("$_myPath/${dirs[i]}", f1h[i]);
+        result.add(d);
+        if (recursive) {
+          result.addAll(
+              d.listSync(recursive: recursive, followLinks: followLinks));
+        }
       }
     }
 
-    for(var file in dirContent[1]) {
-      result.add(AndroidFile.fromPathSync("$_myPath/$file")!);
+    var f2 = contents.ref.files.toDartString();
+    _AndroidNativeAllocator.instance.free(contents.ref.files);
+    if (f2.isNotEmpty) {
+      var files = f2.split('|');
+      var f2h = contents.ref.fileDescriptors.asTypedList(files.length,
+          finalizer: _AndroidNativeAllocator.instance.nativeFree);
+      for (var i = 0; i < files.length; i++) {
+        result.add(AndroidFile._("$_myPath/${files[i]}", f2h[i]));
+      }
     }
+    _AndroidNativeAllocator.instance.free(contents);
     return result;
   }
 
@@ -563,8 +505,7 @@ class AndroidDirectory extends _Document implements Directory {
     if(_descriptor < 0) {
       throw const FileSystemException("Invalid directory.");
     }
-    validateDescriptor();
-    var r = _nativeProxy.getParent(_descriptor);
+    var r = _AndroidNativePathFuncProxy.instance.getParent(_descriptor);
     if(r != -1) {
       //Already opened, thus we construct directly
       return AndroidDirectory._(_myPath.substring(0, _myPath.lastIndexOf('/')), r);
@@ -583,18 +524,18 @@ class AndroidDirectory extends _Document implements Directory {
     if(_descriptor == 0) {
       throw FileSystemException("Cannot rename because the directory is a root directory.", _myPath);
     }
-    return validateDescriptor().then((v) {
-      return FlutterSafPlatform.instance.rename(_descriptor, newPath).then((result) {
-        if(result == null) {
-          throw FileSystemException("Rename failed", _myPath);
+    return SAFTaskWorker().runTask<int>(
+        _AndroidNativePathFuncProxy.instance.renameDir,
+        [_descriptor, newPath]).then((result) {
+      if (result < 0) {
+        if (result == -3) {
+          return Directory(newPath);
         }
-        _myPath = result[0];
-        _descriptor = result[1];
-        if(_descriptor == -3) {
-          return Directory(_myPath);
-        }
-        return this;
-      });
+        throw FileSystemException("Rename failed", _myPath);
+      }
+      _myPath = newPath;
+      _descriptor = result;
+      return this;
     });
   }
 
@@ -606,16 +547,16 @@ class AndroidDirectory extends _Document implements Directory {
     if(_descriptor == 0) {
       throw FileSystemException("Cannot rename because the directory is a root directory.", _myPath);
     }
-    validateDescriptorSync();
-    var result = _nativeProxy.renameDir(_descriptor, newPath);
-    if(result == null) {
+    var result =
+        _AndroidNativePathFuncProxy.instance.renameDir(_descriptor, newPath);
+    if (result < 0) {
+      if (result == -3) {
+        return Directory(newPath);
+      }
       throw FileSystemException("Rename failed", _myPath);
     }
-    _myPath = result[0];
-    _descriptor = result[1];
-    if(_descriptor == -3) {
-      return Directory(_myPath);
-    }
+    _myPath = newPath;
+    _descriptor = result;
     return this;
   }
 
@@ -660,8 +601,15 @@ class AndroidDirectory extends _Document implements Directory {
 }
 
 class AndroidFile extends _Document implements File {
+  AndroidFile._(super._myPath, super._descriptor) {
+    _finalizer.attach(this, _descriptor, detach: this);
+  }
 
-  AndroidFile._(super._myPath, super._descriptor);
+  static final Finalizer<int> _finalizer = Finalizer<int>((value) {
+    if (value > 0) {
+      _AndroidNativePathFuncProxy.instance.deleteDescriptor(value);
+    }
+  });
 
   static AndroidFile? fromPathSync(String path) {
     var doc = _Document._refreshDocSync(path);
@@ -691,15 +639,18 @@ class AndroidFile extends _Document implements File {
     if(_descriptor == 0) {
       throw FileSystemException("Cannot rename because the file is a root directory.", _myPath);
     }
-    return validateDescriptor().then((v) {
-      return SAFTaskWorker().runTask(_nativeProxy._renameFile, [_descriptor, newPath, true]).then((result) {
-        if(result == null) {
-          throw FileSystemException("Rename failed", _myPath);
+    return SAFTaskWorker().runTask<int>(
+        _AndroidNativePathFuncProxy.instance._renameFile,
+        [_descriptor, newPath, true]).then((result) {
+      if (result < 0) {
+        if (result == -3) {
+          return File(newPath);
         }
-        _myPath = result[0];
-        _descriptor = result[1];
-        return this;
-      });
+        throw FileSystemException("Copy failed", _myPath);
+      }
+      _myPath = newPath;
+      _descriptor = result;
+      return this;
     });
   }
 
@@ -711,13 +662,16 @@ class AndroidFile extends _Document implements File {
     if(_descriptor == 0) {
       throw FileSystemException("Cannot rename because the file is a root directory.", _myPath);
     }
-    validateDescriptorSync();
-    var result = _nativeProxy.renameFile(_descriptor, newPath, true);
-    if(result == null) {
-      throw FileSystemException("Rename failed", _myPath);
+    var result = _AndroidNativePathFuncProxy.instance
+        .renameFile(_descriptor, newPath, true);
+    if (result < 0) {
+      if (result == -3) {
+        return File(newPath);
+      }
+      throw FileSystemException("Copy failed", _myPath);
     }
-    _myPath = result[0];
-    _descriptor = result[1];
+    _myPath = newPath;
+    _descriptor = result;
     return this;
   }
 
@@ -726,13 +680,16 @@ class AndroidFile extends _Document implements File {
     if(_descriptor == 0) {
       throw FileSystemException("Cannot create directory specified.", _myPath);
     }
-    return SAFTaskWorker().runTask<List<dynamic>?>(
-        _nativeProxy.createFile, [_myPath, recursive]).then((result) {
-      if(result == null) {
-        throw FileSystemException("Cannot create directory specified.", _myPath);
+    return SAFTaskWorker().runTask<int>(
+        _AndroidNativePathFuncProxy.instance.createFile,
+        [_myPath, recursive]).then((result) {
+      if (result < 0) {
+        if (result == -3) {
+          return File(_myPath);
+        }
+        throw FileSystemException("Cannot create file specified.", _myPath);
       }
-      _myPath = result[0];
-      _descriptor = result[1];
+      _descriptor = result;
       return this;
     });
   }
@@ -742,34 +699,37 @@ class AndroidFile extends _Document implements File {
     if(_descriptor == 0) {
       return;
     }
-    var result = _nativeProxy.createFile(_myPath, recursive);
-    if(result == null) {
-      throw FileSystemException("Cannot create directory specified.", _myPath);
+    var result =
+        _AndroidNativePathFuncProxy.instance.createFile(_myPath, recursive);
+    if (result < 0) {
+      throw FileSystemException("Cannot create file specified.", _myPath);
     }
-    _myPath = result[0];
-    _descriptor = result[1];
+    _descriptor = result;
   }
 
   @override
   Future<FileSystemEntity> delete({bool recursive = false}) async {
-    return validateDescriptor().then((_){
-      return SAFTaskWorker().runTask<int>(_nativeProxy.deleteFile, [_descriptor]).then((result) {
-        switch(result) {
-          case 0 : _descriptor = -1;
-          case -1: throw FileSystemException("Directory path is invalid", _myPath);
-          case -3: throw FileSystemException("Directory is not empty", _myPath);
-          //unbelievable
-          case -2: throw FileSystemException("Directory descriptor is invalid", _myPath);
-        }
-        return this;
-      });
+    return SAFTaskWorker().runTask<int>(
+        _AndroidNativePathFuncProxy.instance.deleteFile,
+        [_descriptor]).then((result) {
+      switch (result) {
+        case 0:
+          _descriptor = -1;
+        case -1:
+          throw FileSystemException("Directory path is invalid", _myPath);
+        case -3:
+          throw FileSystemException("Directory is not empty", _myPath);
+        //unbelievable
+        case -2:
+          throw FileSystemException("Directory descriptor is invalid", _myPath);
+      }
+      return this;
     });
   }
 
   @override
   void deleteSync({bool recursive = false}) {
-    validateDescriptorSync();
-    var result = _nativeProxy.deleteFile(_descriptor);
+    var result = _AndroidNativePathFuncProxy.instance.deleteFile(_descriptor);
     switch(result) {
       case 0 : _descriptor = -1;
       case -1: throw FileSystemException("Directory path is invalid", _myPath);
@@ -781,20 +741,11 @@ class AndroidFile extends _Document implements File {
 
   @override
   Future<bool> exists() async {
-    if(_descriptor < 0) {
-      return Future.value(false);
-    }
-    return validateDescriptor().then((v) {
-      return _descriptor >= 0;
-    });
+    return Future.value(_descriptor >= 0);
   }
 
   @override
   bool existsSync() {
-    if(_descriptor < 0) {
-      return false;
-    }
-    validateDescriptorSync();
     return _descriptor >= 0;
   }
 
@@ -803,20 +754,19 @@ class AndroidFile extends _Document implements File {
 
   @override
   Future<int> length() {
-    return validateDescriptor().then((_){
-      return FlutterSafPlatform.instance.fsize(_descriptor).then((s) {
-        if(s == null) {
-          return 0;
-        }
-        return s;
-      });
+    return SAFTaskWorker().runTask(
+        _AndroidNativePathFuncProxy.instance.getFileSize,
+        [_descriptor]).then((s) {
+      if (s == null) {
+        return 0;
+      }
+      return s;
     });
   }
 
   @override
   int lengthSync() {
-    validateDescriptorSync();
-    return _nativeProxy.getFileSize(_descriptor);
+    return _AndroidNativePathFuncProxy.instance.getFileSize(_descriptor);
   }
 
   @override
@@ -843,10 +793,8 @@ class AndroidFile extends _Document implements File {
     if(_descriptor < 0) {
       throw FileSystemException("Invalid file.", super._myPath);
     }
-    validateDescriptor();
-    var r = _nativeProxy.getParent(_descriptor);
+    var r = _AndroidNativePathFuncProxy.instance.getParent(_descriptor);
     if(r != -1) {
-      //Already opened, thus we construct directly
       return AndroidDirectory._(_myPath.substring(0, _myPath.lastIndexOf('/')), r);
     }
     throw FileSystemException("Invalid file.", super._myPath);
@@ -857,12 +805,13 @@ class AndroidFile extends _Document implements File {
 
   @override
   Future<Uint8List> readAsBytes() {
-    return SAFTaskWorker().runTask<Uint8List>(_nativeProxy.fileReadAllBytes, [_descriptor]);
+    return SAFTaskWorker().runTask<Uint8List>(
+        _AndroidNativePathFuncProxy.instance.fileReadAllBytes, [_descriptor]);
   }
 
   @override
   Uint8List readAsBytesSync() {
-    return _nativeProxy.fileReadAllBytes(_descriptor);
+    return _AndroidNativePathFuncProxy.instance.fileReadAllBytes(_descriptor);
   }
 
   @override
@@ -873,18 +822,18 @@ class AndroidFile extends _Document implements File {
     if(_descriptor == 0) {
       throw FileSystemException("Cannot rename because the file is a root directory.", _myPath);
     }
-    return validateDescriptor().then((v) {
-      return SAFTaskWorker().runTask(_nativeProxy._renameFile, [_descriptor, newPath, false]).then((result) {
-        if(result == null) {
-          throw FileSystemException("Rename failed", _myPath);
-        }
-        _myPath = result[0];
-        _descriptor = result[1];
-        if(_descriptor == -3) {
+    return SAFTaskWorker().runTask<int>(
+        _AndroidNativePathFuncProxy.instance._renameFile,
+        [_descriptor, newPath, false]).then((result) {
+      if (result < 0) {
+        if (result == -3) {
           return File(_myPath);
         }
-        return this;
-      });
+        throw FileSystemException("Rename failed", _myPath);
+      }
+      _myPath = newPath;
+      _descriptor = result;
+      return this;
     });
   }
 
@@ -896,16 +845,16 @@ class AndroidFile extends _Document implements File {
     if(_descriptor == 0) {
       throw FileSystemException("Cannot rename because the file is a root directory.", _myPath);
     }
-    validateDescriptorSync();
-    var result = _nativeProxy.renameFile(_descriptor, newPath, false);
-    if(result == null) {
+    var result = _AndroidNativePathFuncProxy.instance
+        .renameFile(_descriptor, newPath, false);
+    if (result < 0) {
+      if (result == -3) {
+        return File(_myPath);
+      }
       throw FileSystemException("Rename failed", _myPath);
     }
-    _myPath = result[0];
-    _descriptor = result[1];
-    if(_descriptor == -3) {
-      return File(_myPath);
-    }
+    _myPath = newPath;
+    _descriptor = result;
     return this;
   }
 
@@ -913,12 +862,16 @@ class AndroidFile extends _Document implements File {
   Future<File> writeAsBytes(List<int> bytes, {FileMode mode = FileMode.write, bool flush = false}) {
     if(_descriptor == -1) {
       return create(recursive: true).then((_) {
-        return SAFTaskWorker().runTask<File>(_nativeProxy._fileWriteAllBytes, [_descriptor, bytes, mode]).then((_) {
+        return SAFTaskWorker().runTask<File>(
+            _AndroidNativePathFuncProxy.instance._fileWriteAllBytes,
+            [_descriptor, bytes, mode]).then((_) {
           return this;
         });
       });
     } else {
-      return SAFTaskWorker().runTask(_nativeProxy._fileWriteAllBytes, [_descriptor, bytes, mode]).then((_) {
+      return SAFTaskWorker().runTask(
+          _AndroidNativePathFuncProxy.instance._fileWriteAllBytes,
+          [_descriptor, bytes, mode]).then((_) {
         return this;
       });
     }
@@ -930,7 +883,8 @@ class AndroidFile extends _Document implements File {
       createSync(recursive: true);
     }
     //Flush is always true
-    _nativeProxy.fileWriteAllBytes(_descriptor, bytes, mode);
+    _AndroidNativePathFuncProxy.instance
+        .fileWriteAllBytes(_descriptor, bytes, mode);
   }
 
   // TODO: region not implement
@@ -1055,7 +1009,7 @@ class AndroidRandomAccessFile implements RandomAccessFile{
       String path,
       FileMode mode)
   {
-    var fd = _nativeProxy.openFile(descriptor, mode);
+    var fd = _AndroidNativePathFuncProxy.instance.openFile(descriptor, mode);
     if(fd <= 0) {
       return null;
     }
@@ -1068,7 +1022,8 @@ class AndroidRandomAccessFile implements RandomAccessFile{
       FileMode mode)
   async {
     return SAFTaskWorker().runTask<int>(
-        _nativeProxy.openFile, [descriptor, mode]).then((fd) {
+        _AndroidNativePathFuncProxy.instance.openFile,
+        [descriptor, mode]).then((fd) {
       if(fd <= 0) {
         return null;
       }
@@ -1105,33 +1060,43 @@ class AndroidRandomAccessFile implements RandomAccessFile{
 
   @override
   Future<void> close() {
-    return _singleOpAsync(_nativeProxy.closeFile).then((v){ _fd = -1; return; });
+    return _singleOpAsync(_AndroidNativePathFuncProxy.instance.closeFile)
+        .then((v) {
+      _fd = -1;
+      return;
+    });
   }
 
   @override
   void closeSync() {
-    _singleOp(_nativeProxy.closeFile);
+    _singleOp(_AndroidNativePathFuncProxy.instance.closeFile);
     _fd = -1;
   }
 
   @override
   Future<RandomAccessFile> flush() {
-    return _singleOpAsync(_nativeProxy.flushFile).then((v) { return this; });
+    return _singleOpAsync(_AndroidNativePathFuncProxy.instance.flushFile)
+        .then((v) {
+      return this;
+    });
   }
 
   @override
   void flushSync() {
-    _singleOp(_nativeProxy.flushFile);
+    _singleOp(_AndroidNativePathFuncProxy.instance.flushFile);
   }
 
   @override
   Future<int> length() {
-    return _singleOpAsync(_nativeProxy.fileSize).then((s) { return s; });
+    return _singleOpAsync(_AndroidNativePathFuncProxy.instance.fileSize)
+        .then((s) {
+      return s;
+    });
   }
 
   @override
   int lengthSync() {
-    return _singleOp(_nativeProxy.fileSize);
+    return _singleOp(_AndroidNativePathFuncProxy.instance.fileSize);
   }
 
   @override
@@ -1139,12 +1104,14 @@ class AndroidRandomAccessFile implements RandomAccessFile{
 
   @override
   Future<int> position() {
-    return _singleOpAsync(_nativeProxy.ftell).then((p) {return p;});
+    return _singleOpAsync(_AndroidNativePathFuncProxy.instance.ftell).then((p) {
+      return p;
+    });
   }
 
   @override
   int positionSync() {
-    return _singleOp(_nativeProxy.ftell);
+    return _singleOp(_AndroidNativePathFuncProxy.instance.ftell);
   }
 
   @override
@@ -1158,25 +1125,31 @@ class AndroidRandomAccessFile implements RandomAccessFile{
       return Future.value(<Uint8>[] as FutureOr<Uint8List>?);
     }
 
-    final p = _allocator.allocate<Uint8>(count);
-    return SAFTaskWorker().runTask<int>(_nativeProxy.readBytes, [_fd, p, count]).then((v) {
+    final p = _AndroidNativeAllocator.instance.allocate<Uint8>(count);
+    return SAFTaskWorker().runTask<int>(
+        _AndroidNativePathFuncProxy.instance.readBytes,
+        [_fd, p, count]).then((v) {
       _isOperationPending = false;
       if(v < 0) {
-        _allocator.free(p);
+        _AndroidNativeAllocator.instance.free(p);
         throw FileSystemException("$_fd: Operation failed.", _myPath);
       }
-      return p.asTypedList(v, finalizer: _allocator.nativeFree);
+      return p.asTypedList(v,
+          finalizer: _AndroidNativeAllocator.instance.nativeFree);
     });
   }
 
   @override
   Future<int> readByte() {
-    return _singleOpAsync(_nativeProxy.readByte).then((p) {return p;});
+    return _singleOpAsync(_AndroidNativePathFuncProxy.instance.readByte)
+        .then((p) {
+      return p;
+    });
   }
 
   @override
   int readByteSync() {
-    return _singleOp(_nativeProxy.readByte);
+    return _singleOp(_AndroidNativePathFuncProxy.instance.readByte);
   }
 
   @override
@@ -1186,10 +1159,12 @@ class AndroidRandomAccessFile implements RandomAccessFile{
     }
     _isOperationPending = true;
     final count = end == null ? buffer.length - start : end - start;
-    final p = _allocator.allocate<Uint8>(count);
-    return SAFTaskWorker().runTask<int>(_nativeProxy.readBytes, [_fd, p, count]).then((ret) {
+    final p = _AndroidNativeAllocator.instance.allocate<Uint8>(count);
+    return SAFTaskWorker().runTask<int>(
+        _AndroidNativePathFuncProxy.instance.readBytes,
+        [_fd, p, count]).then((ret) {
       if(ret < 0) {
-        _allocator.free(p);
+        _AndroidNativeAllocator.instance.free(p);
         _isOperationPending = false;
         throw FileSystemException("$_fd: Operation failed.", _myPath);
       }
@@ -1197,7 +1172,7 @@ class AndroidRandomAccessFile implements RandomAccessFile{
       final tp = p.asTypedList(ret);
       buffer.setAll(start, tp);
 
-      _allocator.free(p);
+      _AndroidNativeAllocator.instance.free(p);
       _isOperationPending = false;
       return ret;
     });
@@ -1210,18 +1185,18 @@ class AndroidRandomAccessFile implements RandomAccessFile{
     }
     _isOperationPending = true;
     final count = end == null ? buffer.length - start : end - start;
-    final p = _allocator.allocate<Uint8>(count);
-    final ret = _nativeProxy.readBytes(_fd, p, count);
+    final p = _AndroidNativeAllocator.instance.allocate<Uint8>(count);
+    final ret = _AndroidNativePathFuncProxy.instance.readBytes(_fd, p, count);
     _isOperationPending = false;
     if(ret < 0) {
-      _allocator.free(p);
+      _AndroidNativeAllocator.instance.free(p);
       throw FileSystemException("$_fd: Operation failed.", _myPath);
     }
 
     final tp = p.asTypedList(ret);
     buffer.setAll(start, tp);
 
-    _allocator.free(p);
+    _AndroidNativeAllocator.instance.free(p);
     _isOperationPending = false;
     return ret;
   }
@@ -1232,15 +1207,16 @@ class AndroidRandomAccessFile implements RandomAccessFile{
       throw FileSystemException("$_fd: Operation is pending.", _myPath);
     }
     _isOperationPending = true;
-    final p = _allocator.allocate<Uint8>(count);
-    final ret = _nativeProxy.readBytes(_fd, p, count);
+    final p = _AndroidNativeAllocator.instance.allocate<Uint8>(count);
+    final ret = _AndroidNativePathFuncProxy.instance.readBytes(_fd, p, count);
     _isOperationPending = false;
     if(ret < 0) {
-      _allocator.free(p);
+      _AndroidNativeAllocator.instance.free(p);
       throw FileSystemException("$_fd: Operation failed.", _myPath);
     }
 
-    return p.asTypedList(ret, finalizer: _allocator.nativeFree);
+    return p.asTypedList(ret,
+        finalizer: _AndroidNativeAllocator.instance.nativeFree);
   }
 
   @override
@@ -1249,7 +1225,8 @@ class AndroidRandomAccessFile implements RandomAccessFile{
       throw FileSystemException("$_fd: Operation is pending.", _myPath);
     }
     _isOperationPending = true;
-    return SAFTaskWorker().runTask<int>(_nativeProxy.fseek, [_fd, position]).then((v) {
+    return SAFTaskWorker().runTask<int>(
+        _AndroidNativePathFuncProxy.instance.fseek, [_fd, position]).then((v) {
       _isOperationPending = false;
       if(v < 0) {
         throw FileSystemException("Failed to set position.", _myPath);
@@ -1264,7 +1241,7 @@ class AndroidRandomAccessFile implements RandomAccessFile{
       throw FileSystemException("$_fd: Operation is pending.", _myPath);
     }
     _isOperationPending = true;
-    var v = _nativeProxy.fseek(_fd, position);
+    var v = _AndroidNativePathFuncProxy.instance.fseek(_fd, position);
     _isOperationPending = false;
     if(v < 0) {
       throw FileSystemException("Failed to set position.", _myPath);
@@ -1277,7 +1254,8 @@ class AndroidRandomAccessFile implements RandomAccessFile{
       throw FileSystemException("$_fd: Operation is pending.");
     }
     _isOperationPending = true;
-    return SAFTaskWorker().runTask(_nativeProxy.writeByte, [_fd, value]).then((v) {
+    return SAFTaskWorker().runTask(
+        _AndroidNativePathFuncProxy.instance.writeByte, [_fd, value]).then((v) {
       _isOperationPending = false;
       if(v != 1) {
         throw FileSystemException("Failed to write byte.", _myPath);
@@ -1292,7 +1270,7 @@ class AndroidRandomAccessFile implements RandomAccessFile{
       throw FileSystemException("$_fd: Operation is pending.");
     }
     _isOperationPending = true;
-    var v = _nativeProxy.writeByte(_fd, value);
+    var v = _AndroidNativePathFuncProxy.instance.writeByte(_fd, value);
     _isOperationPending = false;
     if(v != 1) {
       throw FileSystemException("Failed to write byte.", _myPath);
@@ -1307,12 +1285,14 @@ class AndroidRandomAccessFile implements RandomAccessFile{
     }
     _isOperationPending = true;
     var count = end == null ? buffer.length - start : end - start;
-    var p = _allocator.allocate<Uint8>(count);
+    var p = _AndroidNativeAllocator.instance.allocate<Uint8>(count);
     var a = p.asTypedList(count);
     a.setAll(0, buffer.getRange(start, start + count));
-    return SAFTaskWorker().runTask(_nativeProxy.writeBytes, [_fd, p, count]).then((v) {
+    return SAFTaskWorker().runTask(
+        _AndroidNativePathFuncProxy.instance.writeBytes,
+        [_fd, p, count]).then((v) {
       _isOperationPending = false;
-      _allocator.free(p);
+      _AndroidNativeAllocator.instance.free(p);
       if(v != count) {
         throw FileSystemException("$_fd: Failed to write bytes.");
       }
@@ -1327,12 +1307,12 @@ class AndroidRandomAccessFile implements RandomAccessFile{
     }
     _isOperationPending = true;
     var count = end == null ? buffer.length - start : end - start;
-    var p = _allocator.allocate<Uint8>(count);
+    var p = _AndroidNativeAllocator.instance.allocate<Uint8>(count);
     var a = p.asTypedList(count);
     a.setAll(0, buffer.getRange(start, start + count));
-    var v = _nativeProxy.writeBytes(_fd, p, count);
+    var v = _AndroidNativePathFuncProxy.instance.writeBytes(_fd, p, count);
     _isOperationPending = false;
-    _allocator.free(p);
+    _AndroidNativeAllocator.instance.free(p);
     if(v != count) {
       throw FileSystemException("$_fd: Failed to write bytes.");
     }
