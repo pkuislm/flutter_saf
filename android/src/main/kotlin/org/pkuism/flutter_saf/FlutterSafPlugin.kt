@@ -8,6 +8,7 @@ import android.database.Cursor
 import android.net.Uri
 import android.provider.DocumentsContract
 import android.util.Pair
+import androidx.annotation.Keep
 import androidx.documentfile.provider.DocumentFile
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
@@ -18,7 +19,6 @@ import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
 import io.flutter.plugin.common.PluginRegistry
 import java.io.File
-import java.util.Stack
 
 
 /** FlutterSafPlugin */
@@ -185,6 +185,7 @@ class LRUCache<K, V>(private val maxCapacity: Int) :
   }
 }
 
+@Keep
 class SAFPathWrapper(private val myContext: Context) {
   //HashCode of getUri()
   private val _roots: HashMap<String, Uri> = HashMap()
@@ -193,6 +194,16 @@ class SAFPathWrapper(private val myContext: Context) {
 
   private fun getRootUri(rootId: String): Uri? {
     return _roots.getOrDefault(rootId, null)
+  }
+
+  private fun getRootUriByName(path: String): Pair<Int, Uri>? {
+    for (k in _roots.keys) {
+      val pos = path.indexOf(k)
+      if (pos != -1) {
+        return Pair(pos, _roots[k])
+      }
+    }
+    return null
   }
 
   //document descriptor:
@@ -247,6 +258,25 @@ class SAFPathWrapper(private val myContext: Context) {
     destroyNativeProxy()
   }
 
+  fun listRoots(): ArrayList<ArrayList<String>> {
+    val ret = ArrayList<ArrayList<String>>();
+    val dirs = ArrayList<String>();
+    val uris = ArrayList<String>();
+
+    for (k in _roots.keys) {
+      dirs.add(k)
+      uris.add(_roots[k]?.path ?: k)
+    }
+    ret.add(dirs)
+    ret.add(uris)
+    return ret
+  }
+
+  fun removeRootUri(path: String) {
+    val takeFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+    myContext.contentResolver.releasePersistableUriPermission(_roots[path]!!, takeFlags)
+  }
+
   fun handleIntentResult(resultCode: Int, data: Intent?):ArrayList<String>? {
     if(resultCode != RESULT_OK) {
       return null
@@ -281,29 +311,19 @@ class SAFPathWrapper(private val myContext: Context) {
   //both dir and file uses this function
   fun onOpenPath(p: String): Pair<String, Int> {
     val path = if(p.startsWith("file://", ignoreCase = true)) p.substring(7) else p;
-    if (!path.startsWith("/")) {
-      return Pair("", SpecialDescriptors.DOC_INVALID.id)
-    }
 
     if(path == "/") {
       return Pair("", SpecialDescriptors.DOC_ROOT.id)
     }
 
     try {
-      val separator = path.indexOf("/", 1)
+      val rootInfo = getRootUriByName(path) ?: return Pair(path, SpecialDescriptors.DOC_NORMAL.id)
 
-      if(separator == -1) {
-        val id = path.substring(1)
-        if (!_roots.containsKey(id)) {
-          return Pair(path, SpecialDescriptors.DOC_NORMAL.id)
-        }
-        return Pair(path, setDocument(DocumentFile.fromTreeUri(myContext, _roots[id]!!)!!));
-      }
-      val rootID = path.substring(1, separator)
-      val rootUri = getRootUri(rootID) ?: return Pair(path, SpecialDescriptors.DOC_NORMAL.id)
-
-      val fileID = path.substring(1)
-      val target = DocumentFile.fromTreeUri(myContext, DocumentsContract.buildDocumentUriUsingTree(rootUri, fileID))
+      val fileID = path.substring(rootInfo.first).trimStart('/')
+      val target = DocumentFile.fromTreeUri(
+        myContext,
+        DocumentsContract.buildDocumentUriUsingTree(rootInfo.second, fileID)
+      )
 
       if (target != null) {
         if(target.exists()) {
@@ -330,22 +350,19 @@ class SAFPathWrapper(private val myContext: Context) {
   @JvmOverloads
   fun createDirectory(path: String, recursive: Boolean, isFile: Boolean = false, type: String = "application/octet-stream"): Pair<String, Int> {
     //root directory can't create new directory
-    if (!path.startsWith("/") || path == "/" || path.isEmpty()) {
+    if (path == "/" || path.isEmpty()) {
       return Pair("", SpecialDescriptors.DOC_INVALID.id)
     }
 
-    val separator = path.indexOf("/", 1)
-    if(separator == -1) {
-      return Pair("", SpecialDescriptors.DOC_INVALID.id)
-    }
+    val rootInfo = getRootUriByName(path) ?: return Pair(path, SpecialDescriptors.DOC_NORMAL.id)
 
-    val rootID = path.substring(1, separator)
-    val rootUri = getRootUri(rootID)
-      ?: return Pair("", SpecialDescriptors.DOC_INVALID.id)
+    val fID = path.substring(rootInfo.first).trimStart('/')
 
-    val fID = path.substring(1, path.lastIndexOf("/"))
     var father =
-      DocumentFile.fromTreeUri(myContext, DocumentsContract.buildDocumentUriUsingTree(rootUri, fID))
+      DocumentFile.fromTreeUri(
+        myContext,
+        DocumentsContract.buildDocumentUriUsingTree(rootInfo.second, fID)
+      )
         ?: return Pair("", SpecialDescriptors.DOC_INVALID.id)
 
     if(!father.exists()) {
