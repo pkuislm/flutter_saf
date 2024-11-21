@@ -185,7 +185,6 @@ class LRUCache<K, V>(private val maxCapacity: Int) :
   }
 }
 
-@Keep
 class SAFPathWrapper(private val myContext: Context) {
   //HashCode of getUri()
   private val _roots: HashMap<String, Uri> = HashMap()
@@ -226,6 +225,7 @@ class SAFPathWrapper(private val myContext: Context) {
     return descriptor
   }
 
+  @Keep
   fun checkDocumentStat(descriptor: Int): Int {
     if(descriptor <= 0)
       return descriptor
@@ -309,6 +309,7 @@ class SAFPathWrapper(private val myContext: Context) {
   //root directory's descriptor will be nothing
   //Cache DocumentFile to gain better performance
   //both dir and file uses this function
+  @Keep
   fun onOpenPath(p: String): Pair<String, Int> {
     val path = if(p.startsWith("file://", ignoreCase = true)) p.substring(7) else p;
 
@@ -338,6 +339,7 @@ class SAFPathWrapper(private val myContext: Context) {
     }
   }
 
+  @Keep
   fun getParent(descriptor: Int): Int {
     if(descriptor > 0) {
       val df = getDocument(descriptor) ?: return SpecialDescriptors.DOC_CACHE_MISS.id
@@ -347,6 +349,7 @@ class SAFPathWrapper(private val myContext: Context) {
     return SpecialDescriptors.DOC_INVALID.id
   }
 
+  @Keep
   @JvmOverloads
   fun createDirectory(path: String, recursive: Boolean, isFile: Boolean = false, type: String = "application/octet-stream"): Pair<String, Int> {
     //root directory can't create new directory
@@ -387,12 +390,54 @@ class SAFPathWrapper(private val myContext: Context) {
     return Pair(path, setDocument(father))
   }
 
+  fun _list(root: DocumentFile): ArrayList<ArrayList<String>> {
+    val dirInfo = ArrayList<ArrayList<String>>()
+    if (root.isDirectory) {
+      val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(
+        root.uri,
+        DocumentsContract.getDocumentId(root.uri)
+      )
+      val c: Cursor? = myContext.contentResolver.query(
+        childrenUri,
+        arrayOf<String>(
+          DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+          DocumentsContract.Document.COLUMN_MIME_TYPE,
+          //DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+        ),
+        null,
+        null,
+        null
+      )
+
+      val dirList = ArrayList<String>()
+      val fileList = ArrayList<String>()
+      c.use { q ->
+        if (q != null) {
+          while (q.moveToNext()) {
+            val name = q.getString(0)
+            val mime = q.getString(1)
+            //val docId = q.getString(2)
+            if (mime.equals(DocumentsContract.Document.MIME_TYPE_DIR)) {
+              dirList.add(name)
+            } else {
+              fileList.add(name)
+            }
+          }
+        }
+      }
+      dirInfo.add(dirList)
+      dirInfo.add(fileList)
+    }
+    return dirInfo
+  }
+
+  @Keep
   fun listDirectory(descriptor: Int): Pair<Int, ArrayList<ArrayList<String>>> {
-    if(descriptor == SpecialDescriptors.DOC_ROOT.id) {
+    if (descriptor == SpecialDescriptors.DOC_ROOT.id) {
       //root directory, list all authorized directories
       val dirList = ArrayList<String>()
       val fileList = ArrayList<String>()
-      for(r in _roots.keys) {
+      for (r in _roots.keys) {
         dirList.add(r)
       }
       val dirInfo = ArrayList<ArrayList<String>>()
@@ -402,46 +447,13 @@ class SAFPathWrapper(private val myContext: Context) {
     }
 
     val dirInfo = ArrayList<ArrayList<String>>()
-    if(descriptor < 0) {
+    if (descriptor < 0) {
       return Pair(descriptor, dirInfo)
     }
     try {
       val root = getDocument(descriptor)
       if (root != null) {
-        //certainly
-        if(root.isDirectory) {
-          val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(root.uri, DocumentsContract.getDocumentId(root.uri))
-          val c: Cursor? = myContext.contentResolver.query(childrenUri,
-            arrayOf<String>(
-              DocumentsContract.Document.COLUMN_DISPLAY_NAME,
-              DocumentsContract.Document.COLUMN_MIME_TYPE,
-              //DocumentsContract.Document.COLUMN_DOCUMENT_ID,
-            ),
-            null,
-            null,
-            null
-          )
-
-          val dirList = ArrayList<String>()
-          val fileList = ArrayList<String>()
-          c.use { q ->
-            if (q != null) {
-              while (q.moveToNext()) {
-                val name = q.getString(0)
-                val mime = q.getString(1)
-                //val docId = q.getString(2)
-                if(mime.equals(DocumentsContract.Document.MIME_TYPE_DIR)) {
-                  dirList.add(name)
-                } else {
-                  fileList.add(name)
-                }
-              }
-            }
-          }
-          dirInfo.add(dirList)
-          dirInfo.add(fileList)
-          return Pair(descriptor, dirInfo)
-        }
+        return Pair(descriptor, _list(root))
       }
       return Pair(SpecialDescriptors.DOC_CACHE_MISS.id, dirInfo)
     } catch (e: SecurityException) {
@@ -455,6 +467,7 @@ class SAFPathWrapper(private val myContext: Context) {
   //-3 dest is a file
   //-4 dest is not an empty folder
   //-5
+  @Keep
   fun renameDirectory(descriptor: Int, newPath: String): Pair<String, Int> {
     if(descriptor <= 0) {
       return Pair("", descriptor)
@@ -517,6 +530,7 @@ class SAFPathWrapper(private val myContext: Context) {
     }
   }
 
+  @Keep
   fun renameFile(descriptor: Int, newPath: String, copy: Boolean): Pair<String, Int> {
     if(descriptor <= 0) {
       return Pair("", descriptor)
@@ -562,6 +576,7 @@ class SAFPathWrapper(private val myContext: Context) {
   }
 
   //return: status
+  @Keep
   fun deleteDir(descriptor: Int, recursive: Boolean): Int {
     if(descriptor <= 0) {
       //cannot delete root or invalid folder
@@ -580,6 +595,7 @@ class SAFPathWrapper(private val myContext: Context) {
     return if(!root.delete()) -1 else 0
   }
 
+  @Keep
   fun deleteFile(descriptor: Int): Int {
     if(descriptor <= 0) {
       //cannot delete root or invalid folder
@@ -594,6 +610,7 @@ class SAFPathWrapper(private val myContext: Context) {
     doc.renameTo(n)
   }
 
+  @Keep
   fun getFileSize(descriptor: Int): Int {
     if(descriptor <= 0) {
       return 0
@@ -606,6 +623,7 @@ class SAFPathWrapper(private val myContext: Context) {
   //-1 file not exist
   //-2 permission denied
   //-3 unknown error
+  @Keep
   fun fopen(descriptor: Int, mode: String): Int {
     if(descriptor <= 0) {
       return -1
