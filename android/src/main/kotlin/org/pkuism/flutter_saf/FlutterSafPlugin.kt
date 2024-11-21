@@ -9,7 +9,9 @@ import android.net.Uri
 import android.provider.DocumentsContract
 import android.util.Pair
 import androidx.annotation.Keep
+import androidx.core.net.toUri
 import androidx.documentfile.provider.DocumentFile
+import com.lazygeniouz.dfc.file.DocumentFileCompat
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
@@ -141,12 +143,6 @@ class FlutterSafPlugin: FlutterPlugin, MethodCallHandler, PluginRegistry.Activit
           res.success(0)
         }
       }
-      "rt" -> {
-        val d = call.argument<Int>("d")
-        val n = call.argument<String>("n")
-        fileMgr.test(d!!, n!!)
-        res.success(null)
-      }
     }
   }
 
@@ -189,7 +185,7 @@ class SAFPathWrapper(private val myContext: Context) {
   //HashCode of getUri()
   private val _roots: HashMap<String, Uri> = HashMap()
   //HashCode of DocumentFile
-  private val _handles: LRUCache<Int, DocumentFile> = LRUCache(5000)
+  private val _handles: LRUCache<Int, Uri> = LRUCache(5000)
 
   private fun getRootUri(rootId: String): Uri? {
     return _roots.getOrDefault(rootId, null)
@@ -215,14 +211,96 @@ class SAFPathWrapper(private val myContext: Context) {
     DOC_ROOT(0), DOC_INVALID(-1), DOC_CACHE_MISS(-2), DOC_NORMAL(-3)
   }
 
-  private fun getDocument(descriptor: Int): DocumentFile? {
+  private fun getDocumentUri(descriptor: Int): Uri? {
     return _handles.getOrDefault(descriptor, null)
   }
 
-  private fun setDocument(doc: DocumentFile):Int {
+  private fun setDocumentUri(doc: Uri): Int {
     val descriptor = doc.hashCode().and(Int.MAX_VALUE)//ensure value is positive
     _handles[descriptor] = doc
     return descriptor
+  }
+
+  private fun existsUri(uri: Uri): Boolean {
+    myContext.contentResolver.query(
+      uri,
+      arrayOf<String>(
+        DocumentsContract.Document.COLUMN_DOCUMENT_ID
+      ),
+      null,
+      null,
+      null
+    )?.use { c ->
+      return c.count > 0
+    }
+    return false
+  }
+
+  private fun createDir(uri: Uri, name: String): Uri? {
+    return createFile(uri, name, DocumentsContract.Document.MIME_TYPE_DIR)
+  }
+
+  private fun createFile(uri: Uri, name: String, type: String = "application/octet-stream"): Uri? {
+    return DocumentsContract.createDocument(myContext.contentResolver, uri, type, name)
+  }
+
+  private fun getUriMime(uri: Uri): String {
+    myContext.contentResolver.query(
+      uri,
+      arrayOf<String>(
+        DocumentsContract.Document.COLUMN_MIME_TYPE
+      ),
+      null,
+      null,
+      null
+    )?.use { c ->
+      if (c.moveToFirst()) {
+        return c.getString(0)
+      }
+      return ""
+    }
+    return ""
+  }
+
+  private fun geturiFileSize(uri: Uri): Int {
+    myContext.contentResolver.query(
+      uri,
+      arrayOf<String>(
+        DocumentsContract.Document.COLUMN_SIZE
+      ),
+      null,
+      null,
+      null
+    )?.use { c ->
+      return if (c.moveToFirst()) c.getInt(0) else 0
+    }
+    return 0
+  }
+
+  private fun getDirChildrenCount(uri: Uri): Int {
+    val childUri =
+      DocumentsContract.buildChildDocumentsUriUsingTree(uri, DocumentsContract.getDocumentId(uri))
+    myContext.contentResolver.query(
+      childUri,
+      arrayOf<String>(
+        DocumentsContract.Document.COLUMN_DOCUMENT_ID
+      ),
+      null,
+      null,
+      null
+    )?.use { c ->
+      return c.count
+    }
+    return 0
+  }
+
+  private fun isUriFile(uri: Uri): Boolean {
+    val mime = getUriMime(uri)
+    return !(DocumentsContract.Document.MIME_TYPE_DIR == mime || mime.isEmpty())
+  }
+
+  private fun isUriDir(uri: Uri): Boolean {
+    return getUriMime(uri) == DocumentsContract.Document.MIME_TYPE_DIR
   }
 
   @Keep
@@ -231,9 +309,9 @@ class SAFPathWrapper(private val myContext: Context) {
       return descriptor
     if(!_handles.containsKey(descriptor))
       return SpecialDescriptors.DOC_CACHE_MISS.id
-    val doc = _handles[descriptor]
+    val doc = getDocumentUri(descriptor)!!
     //object exists, but this file is gone
-    if(!doc!!.exists()) {
+    if (!existsUri(doc)) {
       _handles.remove(descriptor)
       return SpecialDescriptors.DOC_CACHE_MISS.id
     }
@@ -321,19 +399,13 @@ class SAFPathWrapper(private val myContext: Context) {
       val rootInfo = getRootUriByName(path) ?: return Pair(path, SpecialDescriptors.DOC_NORMAL.id)
 
       val fileID = path.substring(rootInfo.first).trimStart('/')
-      val target = DocumentFile.fromTreeUri(
-        myContext,
-        DocumentsContract.buildDocumentUriUsingTree(rootInfo.second, fileID)
-      )
+      val target = DocumentsContract.buildDocumentUriUsingTree(rootInfo.second, fileID)
 
-      if (target != null) {
-        if(target.exists()) {
-          return Pair(path, setDocument(target))
-        }
-        return Pair(path, SpecialDescriptors.DOC_INVALID.id)
+      return if (existsUri(target)) {
+        Pair(path, setDocumentUri(target))
+      } else {
+        Pair(path, SpecialDescriptors.DOC_INVALID.id)
       }
-      return Pair("", SpecialDescriptors.DOC_INVALID.id)
-
     } catch (e1: Exception) {
       return Pair("", SpecialDescriptors.DOC_INVALID.id)
     }
@@ -342,9 +414,11 @@ class SAFPathWrapper(private val myContext: Context) {
   @Keep
   fun getParent(descriptor: Int): Int {
     if(descriptor > 0) {
-      val df = getDocument(descriptor) ?: return SpecialDescriptors.DOC_CACHE_MISS.id
-      val pf = df.parentFile ?: return SpecialDescriptors.DOC_ROOT.id//root
-      return setDocument(pf)
+      val df = getDocumentUri(descriptor) ?: return SpecialDescriptors.DOC_CACHE_MISS.id
+
+      val pf = DocumentFile.fromTreeUri(myContext, df)?.parentFile
+        ?: return SpecialDescriptors.DOC_ROOT.id//root
+      return setDocumentUri(pf.uri)
     }
     return SpecialDescriptors.DOC_INVALID.id
   }
@@ -361,41 +435,41 @@ class SAFPathWrapper(private val myContext: Context) {
 
     val fID = path.substring(rootInfo.first).trimStart('/')
 
-    var father =
-      DocumentFile.fromTreeUri(
-        myContext,
-        DocumentsContract.buildDocumentUriUsingTree(rootInfo.second, fID)
-      )
+    try {
+      var father = DocumentsContract.buildDocumentUriUsingTree(rootInfo.second, fID)
         ?: return Pair("", SpecialDescriptors.DOC_INVALID.id)
 
-    if(!father.exists()) {
-      if(!recursive) {
-        return Pair("", SpecialDescriptors.DOC_INVALID.id)
-      }
-      val paths = fID.split("/")
-      for(p in paths) {
-        if(p.isEmpty()) {
-          continue
+      if (!existsUri(father)) {
+        if (!recursive) {
+          return Pair("", SpecialDescriptors.DOC_INVALID.id)
         }
-        father = father.createDirectory(p)!!
+        val paths = fID.split("/")
+        for (p in paths) {
+          if (p.isEmpty()) {
+            continue
+          }
+          father = createDir(father, p)!!
+        }
       }
-    }
 
-    val rID = path.substring(path.lastIndexOf("/") + 1)
-    if(isFile) {
-      father = father.createFile(type, rID)!!
-    } else {
-      father = father.createDirectory(rID)!!
+      val rID = path.substring(path.lastIndexOf("/") + 1)
+      if (isFile) {
+        father = createFile(father, rID, type)!!
+      } else {
+        father = createDir(father, rID)!!
+      }
+      return Pair(path, setDocumentUri(father))
+    } catch (e: Exception) {
+      return Pair("", SpecialDescriptors.DOC_INVALID.id)
     }
-    return Pair(path, setDocument(father))
   }
 
-  fun _list(root: DocumentFile): ArrayList<ArrayList<String>> {
+  fun _list(root: Uri): ArrayList<ArrayList<String>> {
     val dirInfo = ArrayList<ArrayList<String>>()
-    if (root.isDirectory) {
+    try {
       val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(
-        root.uri,
-        DocumentsContract.getDocumentId(root.uri)
+        root,
+        DocumentsContract.getDocumentId(root)
       )
       val c: Cursor? = myContext.contentResolver.query(
         childrenUri,
@@ -427,6 +501,8 @@ class SAFPathWrapper(private val myContext: Context) {
       }
       dirInfo.add(dirList)
       dirInfo.add(fileList)
+    } catch (e: Exception) {
+      dirInfo.clear()
     }
     return dirInfo
   }
@@ -451,7 +527,7 @@ class SAFPathWrapper(private val myContext: Context) {
       return Pair(descriptor, dirInfo)
     }
     try {
-      val root = getDocument(descriptor)
+      val root = getDocumentUri(descriptor)
       if (root != null) {
         return Pair(descriptor, _list(root))
       }
@@ -473,24 +549,24 @@ class SAFPathWrapper(private val myContext: Context) {
       return Pair("", descriptor)
     }
 
-    val src = getDocument(descriptor) ?: return Pair("", -2)
+    val src = getDocumentUri(descriptor) ?: return Pair("", -2)
     var dstInfo = onOpenPath(newPath)
-    val dstFile: DocumentFile
+    val dstFile: Uri
     if(dstInfo.second == SpecialDescriptors.DOC_NORMAL.id) {
 
-      dstFile = DocumentFile.fromFile(File(newPath))
+      dstFile = File(newPath).toUri()
 
     } else if(dstInfo.second == SpecialDescriptors.DOC_INVALID.id) {
 
       dstInfo = createDirectory(newPath, true)
-      dstFile = getDocument(dstInfo.second)!!
+      dstFile = getDocumentUri(dstInfo.second)!!
 
     } else {
-      dstFile = getDocument(dstInfo.second)!!
-      if(dstFile.isFile) {
+      dstFile = getDocumentUri(dstInfo.second)!!
+      if (isUriFile(dstFile)) {
         return Pair("", -3)
       }
-      if(dstFile.isDirectory && dstFile.listFiles().isNotEmpty()) {
+      if (isUriDir(dstFile) && getDirChildrenCount(dstFile) > 0) {
         return Pair("", -4)
       }
     }
@@ -498,34 +574,52 @@ class SAFPathWrapper(private val myContext: Context) {
     //no error
     var flag = true
 
-    fun copyDir(src: DocumentFile, dst: DocumentFile) {
-      for(sf in src.listFiles()) {
-        if(sf.isFile) {
-          val sft = if(sf.type == null) "application/octet-stream" else sf.type!!
-          val df = dst.createFile(sft, sf.name!!)
-          val sfs = myContext.contentResolver.openInputStream(sf.uri)!!
-          val dfs = myContext.contentResolver.openOutputStream(df!!.uri)!!
-          sfs.copyTo(dfs)
-          dfs.close()
-          sfs.close()
-        } else {
-          val dd = dst.createDirectory(sf.name!!)!!
-          copyDir(sf, dd)
+    fun copyDir(src: Uri, dst: Uri) {
+      val srcChild =
+        DocumentsContract.buildChildDocumentsUriUsingTree(src, DocumentsContract.getDocumentId(src))
+      myContext.contentResolver.query(
+        srcChild,
+        arrayOf<String>(
+          DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+          DocumentsContract.Document.COLUMN_MIME_TYPE,
+          DocumentsContract.Document.COLUMN_DOCUMENT_ID
+        ),
+        null,
+        null,
+        null
+      )?.use { c ->
+        {
+          while (c.moveToNext()) {
+            val sf = DocumentsContract.buildDocumentUriUsingTree(src, c.getString(2))
+            if (isUriFile(sf)) {
+              val sft = c.getString(1).ifEmpty { "application/octet-stream" }
+              val df = createFile(dst, c.getString(0), sft)
+              val sfs = myContext.contentResolver.openInputStream(sf)!!
+              val dfs = myContext.contentResolver.openOutputStream(df!!)!!
+              sfs.copyTo(dfs)
+              dfs.close()
+              sfs.close()
+            } else {
+              val dd = createDir(dst, c.getString(2))!!
+              copyDir(sf, dd)
+            }
+          }
         }
       }
     }
 
     try {
-        copyDir(src, dstFile)
+      //DocumentsContract.copyDocument(myContext.contentResolver, src, dstFile)
+      copyDir(src, dstFile)
     } catch (e : Exception) {
       flag = false
     }
 
     if(flag) {
-      src.delete()
+      DocumentsContract.deleteDocument(myContext.contentResolver, src)
       return Pair(dstInfo.first, dstInfo.second)
     } else {
-      dstFile.delete()
+      DocumentsContract.deleteDocument(myContext.contentResolver, dstFile)
       return Pair("", -5)
     }
   }
@@ -536,17 +630,21 @@ class SAFPathWrapper(private val myContext: Context) {
       return Pair("", descriptor)
     }
 
-    val src = getDocument(descriptor) ?: return Pair("", -2)
+    val src = getDocumentUri(descriptor) ?: return Pair("", -2)
     var dstInfo = onOpenPath(newPath)
-    val dstFile: DocumentFile
+    val dstFile: Uri
     if(dstInfo.second == SpecialDescriptors.DOC_NORMAL.id) {
-      dstFile = DocumentFile.fromFile(File(newPath))
+      dstFile = File(newPath).toUri()
     } else if(dstInfo.second == SpecialDescriptors.DOC_INVALID.id) {
-      dstInfo = createDirectory(newPath, recursive = true, isFile = true, type = src.type ?: "application/octet-stream")
-      dstFile = getDocument(dstInfo.second)!!
+      dstInfo = createDirectory(
+        newPath,
+        recursive = true,
+        isFile = true,
+        type = getUriMime(src).ifEmpty { "application/octet-stream" })
+      dstFile = getDocumentUri(dstInfo.second)!!
     } else {
-      dstFile = getDocument(dstInfo.second)!!
-      if(!dstFile.isFile) {
+      dstFile = getDocumentUri(dstInfo.second)!!
+      if (!isUriFile(dstFile)) {
         return Pair("", -3)
       }
     }
@@ -555,8 +653,8 @@ class SAFPathWrapper(private val myContext: Context) {
     var flag = true
 
     try {
-      val sfs = myContext.contentResolver.openInputStream(src.uri)!!
-      val dfs = myContext.contentResolver.openOutputStream(dstFile.uri)!!
+      val sfs = myContext.contentResolver.openInputStream(src)!!
+      val dfs = myContext.contentResolver.openOutputStream(dstFile)!!
       sfs.copyTo(dfs)
       sfs.close()
       dfs.close()
@@ -566,11 +664,11 @@ class SAFPathWrapper(private val myContext: Context) {
 
     if(flag) {
       if(!copy) {
-        src.delete();
+        DocumentsContract.deleteDocument(myContext.contentResolver, src)
       }
       return Pair(dstInfo.first, dstInfo.second)
     } else {
-      dstFile.delete();
+      DocumentsContract.deleteDocument(myContext.contentResolver, dstFile)
       return Pair("", -5)
     }
   }
@@ -582,17 +680,17 @@ class SAFPathWrapper(private val myContext: Context) {
       //cannot delete root or invalid folder
       return -1
     }
-    val root = getDocument(descriptor) ?: return -2
+    val root = getDocumentUri(descriptor) ?: return -2
 
-    val content = root.listFiles()
-    if(content.isNotEmpty()) {
+    val content = getDirChildrenCount(root)
+    if (content > 0) {
       if(!recursive) {
         //directory is not empty but recursive is false
         return -3
       }
-      return if(!root.delete()) -1 else 0
+      return if (!DocumentsContract.deleteDocument(myContext.contentResolver, root)) -1 else 0
     }
-    return if(!root.delete()) -1 else 0
+    return if (!DocumentsContract.deleteDocument(myContext.contentResolver, root)) -1 else 0
   }
 
   @Keep
@@ -601,13 +699,8 @@ class SAFPathWrapper(private val myContext: Context) {
       //cannot delete root or invalid folder
       return -1
     }
-    val root = getDocument(descriptor) ?: return -2
-    return if(!root.delete()) -1 else 0
-  }
-
-  fun test(d: Int, n: String) {
-    val doc = getDocument(d)!!
-    doc.renameTo(n)
+    val root = getDocumentUri(descriptor) ?: return -2
+    return if (!DocumentsContract.deleteDocument(myContext.contentResolver, root)) -1 else 0
   }
 
   @Keep
@@ -615,8 +708,8 @@ class SAFPathWrapper(private val myContext: Context) {
     if(descriptor <= 0) {
       return 0
     }
-    val doc = getDocument(descriptor) ?: return 0
-    return if(doc.isFile) doc.length().toInt() else 0
+    val doc = getDocumentUri(descriptor) ?: return 0
+    return if (isUriFile(doc)) geturiFileSize(doc) else 0
   }
 
   //returning a descriptor to cpp or an error code
@@ -628,9 +721,9 @@ class SAFPathWrapper(private val myContext: Context) {
     if(descriptor <= 0) {
       return -1
     }
-    val doc = getDocument(descriptor) ?: return -1
+    val doc = getDocumentUri(descriptor) ?: return -1
     return try {
-      val pfd = myContext.contentResolver.openFileDescriptor(doc.uri, mode)
+      val pfd = myContext.contentResolver.openFileDescriptor(doc, mode)
       pfd?.detachFd() ?: -2
     } catch (e: Exception) {
       -2
