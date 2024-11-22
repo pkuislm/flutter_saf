@@ -52,6 +52,9 @@ class FlutterSafPlugin: FlutterPlugin, MethodCallHandler, PluginRegistry.Activit
                   or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
         myActivity.startActivityForResult(intent, CODE_AUTHORIZE_NEW_DIR)
       }
+      "getMediaPrefix" -> {
+        res.success(fileMgr.mediaTypePrefix)
+      }
     }
   }
 
@@ -87,9 +90,8 @@ class RefCountUri(val uri: Uri) {
 }
 
 class SAFPathWrapper(private val myContext: Context) {
-  //HashCode of getUri()
+  val mediaTypePrefix: String = "android://"
   private val _roots: HashMap<String, Uri> = HashMap()
-  //HashCode of DocumentFile
   private val _handles: HashMap<Int, RefCountUri> = HashMap()
 
   private fun getRootUri(rootId: String): Uri? {
@@ -274,7 +276,7 @@ class SAFPathWrapper(private val myContext: Context) {
 
     val rootID = updateRoot(pickedDirectoryUri)
 
-    val root = "/$rootID"
+    val root = "$mediaTypePrefix$rootID"
     val info = ArrayList<String>()
     info.add(root)
     info.add(onOpenPath(root).toString())
@@ -289,16 +291,20 @@ class SAFPathWrapper(private val myContext: Context) {
   }
 
   //Handle
-  //Path is like /primary:comic/bar/foo/text.png
-  //             | treedoc.id |  normalPath
+  //Path is like $mediaPrefixprimary:comic/bar/foo/text.png
+  //                        | treedoc.id |  normalPath
   //root directory's descriptor will be nothing
   //Cache DocumentFile to gain better performance
   //both dir and file uses this function
   @Keep
   fun onOpenPath(p: String): Int {
-    val path = if(p.startsWith("file://", ignoreCase = true)) p.substring(7) else p;
+    if (!p.startsWith(mediaTypePrefix)) {
+      return SpecialDescriptors.DOC_NORMAL.id
+    }
 
-    if(path == "/") {
+    val path = p.substring(mediaTypePrefix.length)
+
+    if (path == "") {
       return SpecialDescriptors.DOC_ROOT.id
     }
 
@@ -333,13 +339,20 @@ class SAFPathWrapper(private val myContext: Context) {
   @Keep
   @JvmOverloads
   fun createDirectory(
-    path: String,
+    p: String,
     recursive: Boolean,
     isFile: Boolean = false,
     type: String = "application/octet-stream"
   ): Int {
     //root directory can't create new directory
-    if (path == "/" || path.isEmpty()) {
+
+    if (!p.startsWith(mediaTypePrefix)) {
+      return SpecialDescriptors.DOC_NORMAL.id
+    }
+
+    val path = p.substring(mediaTypePrefix.length)
+
+    if (path.isEmpty()) {
       return SpecialDescriptors.DOC_INVALID.id
     }
 

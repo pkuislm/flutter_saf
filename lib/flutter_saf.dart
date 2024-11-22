@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:developer';
 import 'dart:ffi';
 import 'dart:io';
 import 'dart:isolate';
@@ -283,12 +282,16 @@ class SAFTaskWorker {
 // }
 
 class _Document {
+  static const String mediaPrefix = "android://";
   String _myPath;//resolved path
   int _descriptor;//hashcode of document file, always >=-1
 
   _Document(this._myPath, this._descriptor);
 
-  static Future<_Document?> _refreshDoc(String path){
+  static Future<_Document?> _refreshDoc(String path) {
+    if (!path.startsWith(mediaPrefix)) {
+      return Future.value(null);
+    }
     return SAFTaskWorker().runTask<int>(
         _AndroidNativePathFuncProxy.instance.openDir, [path]).then((result) {
       if (result < 0) {
@@ -298,7 +301,10 @@ class _Document {
     });
   }
 
-  static _Document? _refreshDocSync(String path){
+  static _Document? _refreshDocSync(String path) {
+    if (!path.startsWith(mediaPrefix)) {
+      return null;
+    }
     var result = _AndroidNativePathFuncProxy.instance.openDir(path);
     if (result < 0) {
       return null;
