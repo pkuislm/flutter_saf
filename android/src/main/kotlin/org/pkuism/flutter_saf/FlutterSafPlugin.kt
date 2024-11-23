@@ -146,16 +146,20 @@ class SAFPathWrapper(private val myContext: Context) {
   }
 
   private fun existsUri(uri: Uri): Boolean {
-    myContext.contentResolver.query(
-      uri,
-      arrayOf<String>(
-        DocumentsContract.Document.COLUMN_DOCUMENT_ID
-      ),
-      null,
-      null,
-      null
-    )?.use { c ->
-      return c.count > 0
+    try {
+      myContext.contentResolver.query(
+        uri,
+        arrayOf<String>(
+          DocumentsContract.Document.COLUMN_DOCUMENT_ID
+        ),
+        null,
+        null,
+        null
+      )?.use { c ->
+        return c.count > 0
+      }
+    } catch (e: Exception) {
+      return false
     }
     return false
   }
@@ -358,7 +362,7 @@ class SAFPathWrapper(private val myContext: Context) {
 
     val rootInfo = getRootUriByName(path) ?: return SpecialDescriptors.DOC_NORMAL.id
 
-    val fID = path.substring(rootInfo.first).trimStart('/')
+    val fID = path.substring(rootInfo.first, path.lastIndexOf("/")).trimStart('/')
 
     try {
       var father = DocumentsContract.buildDocumentUriUsingTree(rootInfo.second, fID)

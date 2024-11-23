@@ -294,7 +294,7 @@ class _Document {
     }
     return SAFTaskWorker().runTask<int>(
         _AndroidNativePathFuncProxy.instance.openDir, [path]).then((result) {
-      if (result < 0) {
+      if (result < -1) {
         return null;
       }
       return _Document(path, result);
@@ -306,7 +306,7 @@ class _Document {
       return null;
     }
     var result = _AndroidNativePathFuncProxy.instance.openDir(path);
-    if (result < 0) {
+    if (result < -1) {
       return null;
     }
     return _Document(path, result);
