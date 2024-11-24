@@ -640,13 +640,13 @@ class AndroidFile extends _Document implements File {
   @override
   Future<File> copy(String newPath) {
     if(_descriptor == -1) {
-      throw FileSystemException("Cannot rename because the file doesn't exist.", _myPath);
+      throw FileSystemException("Cannot copy because the file doesn't exist.", _myPath);
     }
     if(_descriptor == 0) {
-      throw FileSystemException("Cannot rename because the file is a root directory.", _myPath);
+      throw FileSystemException("Cannot copy because the file is a root directory.", _myPath);
     }
     return SAFTaskWorker().runTask<int>(
-        _AndroidNativePathFuncProxy.instance._renameFile,
+        _AndroidNativePathFuncProxy.instance.renameFile,
         [_descriptor, newPath, true]).then((result) {
       if (result < 0) {
         if (result == -3) {
@@ -663,10 +663,10 @@ class AndroidFile extends _Document implements File {
   @override
   File copySync(String newPath) {
     if(_descriptor == -1) {
-      throw FileSystemException("Cannot rename because the file doesn't exist.", _myPath);
+      throw FileSystemException("Cannot copy because the file doesn't exist.", _myPath);
     }
     if(_descriptor == 0) {
-      throw FileSystemException("Cannot rename because the file is a root directory.", _myPath);
+      throw FileSystemException("Cannot copy because the file is a root directory.", _myPath);
     }
     var result = _AndroidNativePathFuncProxy.instance
         .renameFile(_descriptor, newPath, true);
@@ -829,7 +829,7 @@ class AndroidFile extends _Document implements File {
       throw FileSystemException("Cannot rename because the file is a root directory.", _myPath);
     }
     return SAFTaskWorker().runTask<int>(
-        _AndroidNativePathFuncProxy.instance._renameFile,
+        _AndroidNativePathFuncProxy.instance.renameFile,
         [_descriptor, newPath, false]).then((result) {
       if (result < 0) {
         if (result == -3) {

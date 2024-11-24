@@ -76,23 +76,17 @@ Java_org_pkuism_flutter_1saf_SAFPathWrapper_setupNativeProxy(JNIEnv* env, jobjec
 
     jclass cls = env->GetObjectClass(instance);
     s_instance._cls = (jclass)env->NewGlobalRef(cls);
-s_instance.
-openDir = env->GetMethodID(cls, "onOpenPath", "(Ljava/lang/String;)I");
+    s_instance.openDir = env->GetMethodID(cls, "onOpenPath", "(Ljava/lang/String;)I");
     s_instance.getParent = env->GetMethodID(cls, "getParent", "(I)I");
     s_instance.listDir = env->GetMethodID(cls, "listDirectory", "(I)Landroid/util/Pair;");
-s_instance.
-createDir = env->GetMethodID(cls, "createDirectory", "(Ljava/lang/String;Z)I");
-s_instance.
-deleteDescriptor = env->GetMethodID(cls, "deleteDocumentUri", "(I)V");
+    s_instance.createDir = env->GetMethodID(cls, "createDirectory", "(Ljava/lang/String;Z)I");
+    s_instance.deleteDescriptor = env->GetMethodID(cls, "deleteDocumentUri", "(I)V");
     s_instance.deleteDir = env->GetMethodID(cls, "deleteDir", "(IZ)I");
-s_instance.
-renameDir = env->GetMethodID(cls, "renameDirectory", "(ILjava/lang/String;)I");
+    s_instance.renameDir = env->GetMethodID(cls, "renameDirectory", "(ILjava/lang/String;)I");
     s_instance.openFile = env->GetMethodID(cls, "fopen", "(ILjava/lang/String;)I");
     s_instance.getFileSize = env->GetMethodID(cls, "getFileSize", "(I)I");
-s_instance.
-createFile = env->GetMethodID(cls, "createDirectory", "(Ljava/lang/String;ZZ)I");
-s_instance.
-renameFile = env->GetMethodID(cls, "renameFile", "(ILjava/lang/String;Z)I");
+    s_instance.createFile = env->GetMethodID(cls, "createDirectory", "(Ljava/lang/String;ZZ)I");
+    s_instance.renameFile = env->GetMethodID(cls, "renameFile", "(ILjava/lang/String;Z)I");
     s_instance.deleteFile = env->GetMethodID(cls, "deleteFile", "(I)I");
 
     jclass intClass = env->FindClass("java/lang/Integer");
