@@ -865,18 +865,18 @@ class AndroidFile extends _Document implements File {
   }
 
   @override
-  Future<File> writeAsBytes(List<int> bytes, {FileMode mode = FileMode.write, bool flush = false}) {
+  Future<File> writeAsBytes(List<int> bytes, {FileMode mode = FileMode.write, bool flush = false}) async {
     if(_descriptor == -1) {
       return create(recursive: true).then((_) {
-        return SAFTaskWorker().runTask<File>(
-            _AndroidNativePathFuncProxy.instance._fileWriteAllBytes,
+        return SAFTaskWorker().runTask(
+            _AndroidNativePathFuncProxy.instance.fileWriteAllBytes,
             [_descriptor, bytes, mode]).then((_) {
           return this;
         });
       });
     } else {
       return SAFTaskWorker().runTask(
-          _AndroidNativePathFuncProxy.instance._fileWriteAllBytes,
+          _AndroidNativePathFuncProxy.instance.fileWriteAllBytes,
           [_descriptor, bytes, mode]).then((_) {
         return this;
       });
