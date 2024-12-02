@@ -325,11 +325,22 @@ struct FileContent {
 };
 FFIEXPORT
 FileContent* fileReadAllBytes(int32_t descriptor) {
-    auto file = _fopen(descriptor, 0);
-    auto size = _fsize(file);
     auto ret = (FileContent*)malloc(sizeof(FileContent));
-    ret->data = (int8_t*)malloc(size);
+    ret->data = nullptr;
+    ret->size = -1;
 
+    auto file = _fopen(descriptor, 0);
+    if(file < 0) {
+        return ret;
+    }
+
+    auto size = _fsize(file);
+    if(size < 0) {
+        _fclose(file);
+        return ret;
+    }
+
+    ret->data = (int8_t*)malloc(size);
     ret->size = _fread(file, ret->data, size);
     _fclose(file);
     return ret;
@@ -338,6 +349,9 @@ FileContent* fileReadAllBytes(int32_t descriptor) {
 FFIEXPORT
 int32_t fileWriteAllBytes(int32_t descriptor, int8_t* data, int32_t sizeOfData, int32_t mode) {
     auto file = _fopen(descriptor, mode);
+    if(file < 0) {
+        return -1;
+    }
 
     auto size = _fwrite(file, data, sizeOfData);
 
